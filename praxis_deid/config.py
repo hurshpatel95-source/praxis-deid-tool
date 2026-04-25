@@ -1,5 +1,10 @@
 """YAML configuration loading + validation.
 
+Salt-length policy (SECURITY_AUDIT.md finding #3): the example.yaml documents
+">= 32 chars recommended" but nothing enforced it; a config with
+`patient_id_salt: "x"` was silently accepted. We now require >= 32.
+
+
 Schema (see examples/praxis-deid.example.yaml):
 
   practice_id: <uuid issued by Praxis cloud>
@@ -22,10 +27,16 @@ Schema (see examples/praxis-deid.example.yaml):
   deidentification:
     patient_id_salt: <practice-secret>                 # required, never logged
     small_n_threshold: 5
-    procedure_categorization: default                  # 'default' | path to YAML mapping
 
   audit:
     log_path: /var/log/praxis_deid/audit.log
+
+Note (SECURITY_AUDIT.md finding #5): a `procedure_categorization: default`
+field used to live under `deidentification:`. It was loaded but never
+wired through to the Deidentifier — there was no actual default mapping.
+Removed in v0.1.x to stop implying a behavior we don't ship. Practices
+that need code-to-category mapping should pre-process upstream until we
+publish vertical-specific defaults.
 """
 
 from __future__ import annotations
@@ -35,6 +46,18 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+# Minimum patient_id_salt length. 32 hex chars = 128 bits of entropy from
+# `openssl rand -hex 32`, which is the README's recommendation and what
+# example.yaml documents. Anything shorter is functionally a typo or a
+# placeholder and should be rejected at config load.
+MIN_SALT_LENGTH = 32
+
+
+class ConfigError(ValueError):
+    """Raised when a config file is structurally valid YAML but violates a
+    Praxis de-id policy (e.g. patient_id_salt too short). Distinct from
+    ValueError so downstream tooling can catch and present specifically."""
 
 
 @dataclass(frozen=True)
@@ -59,7 +82,6 @@ class OutputConfig:
 class DeidConfig:
     patient_id_salt: str
     small_n_threshold: int
-    procedure_categorization: str  # "default" or path to YAML
 
 
 @dataclass(frozen=True)
@@ -113,10 +135,27 @@ def load_config(path: str | Path) -> Config:
         raise ValueError("output.type=api requires top-level api_endpoint and api_key")
 
     deid_raw = _require_mapping(raw, "deidentification")
+    salt = _require_str(deid_raw, "patient_id_salt")
+    if len(salt) < MIN_SALT_LENGTH:
+        raise ConfigError(
+            f"deidentification.patient_id_salt must be at least {MIN_SALT_LENGTH} "
+            f"characters (got {len(salt)}); use `openssl rand -hex 32` to generate one."
+        )
+    # SECURITY_AUDIT.md #5: `procedure_categorization` was previously loaded
+    # here as a string and silently ignored downstream — there was no default
+    # mapping. We now reject the field with an actionable message instead of
+    # implying it does something. Practices needing code-to-category mapping
+    # should pre-process upstream until vertical defaults ship.
+    if "procedure_categorization" in deid_raw:
+        raise ConfigError(
+            "deidentification.procedure_categorization is no longer supported "
+            "(it was never wired up). Remove the field from your config; "
+            "pre-categorize procedures upstream of the de-id tool until "
+            "vertical-specific default mappings ship."
+        )
     deid = DeidConfig(
-        patient_id_salt=_require_str(deid_raw, "patient_id_salt"),
+        patient_id_salt=salt,
         small_n_threshold=int(deid_raw.get("small_n_threshold", 5)),
-        procedure_categorization=_optional_str(deid_raw, "procedure_categorization") or "default",
     )
     if deid.small_n_threshold < 1:
         raise ValueError("deidentification.small_n_threshold must be >= 1")

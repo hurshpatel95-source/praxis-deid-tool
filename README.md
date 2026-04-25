@@ -25,7 +25,7 @@ Reads CSV exports from your PM system and produces six output CSV files — `pat
 - Patient birth dates: replaced with **age bands** (`18-30`, `31-45`, etc.)
 - Patient ZIPs: truncated to **first 3 digits**, suppressed to `000` if HHS lists the prefix as <20,000 population
 - Specific dates: replaced with **`YYYY-MM`** granularity
-- Specific procedure codes: mapped to **categories** (`knee_replacement`, `cleaning`, etc.)
+- Specific procedure codes: emitted as **category strings** (`knee_replacement`, `cleaning`, etc.). The tool passes through the `procedure_category` column from your source — pre-categorize upstream until vertical-specific default mappings ship.
 - Per-record dollar amounts: bucketed into **revenue bands** (`$1000-5000`, etc.)
 - Patient identifiers: replaced with **HMAC-SHA256 hash** of the source ID using a practice-held salt — stable across runs, irreversible without the salt
 - **Small-N suppression**: any patient with fewer than 5 touchpoints (appointments + procedures) is dropped from output, along with their dependent rows

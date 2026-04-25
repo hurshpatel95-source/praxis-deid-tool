@@ -25,14 +25,26 @@ RESTRICTED_ZIP3_PREFIXES: frozenset[str] = frozenset(
 
 # Age bands. Patients aged 90+ MUST be aggregated into a single "76+" or
 # wider bucket per Safe Harbor §164.514(b)(2)(i)(C). We keep "76+" here.
-AGE_BANDS: tuple[str, ...] = ("0-17", "18-30", "31-45", "46-60", "61-75", "76+")
+# "unknown" is used for missing/future/unparseable DOBs — it preserves the
+# row count for downstream aggregations without fabricating an age. Cloud
+# canonical schema must accept "unknown" for round-trip ingestion.
+AGE_BANDS: tuple[str, ...] = (
+    "0-17", "18-30", "31-45", "46-60", "61-75", "76+", "unknown",
+)
 
 
-def age_to_band(age: int) -> str:
-    """Map an exact age to its Safe Harbor band. Treat negatives as 0; treat
-    impossibly old values (>=120) the same as 90+ — both go to '76+'."""
-    if age < 0:
-        age = 0
+def age_to_band(age: int | None) -> str:
+    """Map an exact age to its Safe Harbor band.
+
+    Returns "unknown" for None or negative ages (e.g. future-dated DOB).
+    This is intentional: silently clamping a -73 (data-quality bug) into
+    "0-17" would fabricate a pediatric record. "unknown" preserves the
+    row for aggregations but does not assert an age the source didn't
+    provide. Impossibly old values (>=120) collapse to "76+" alongside
+    the Safe Harbor 90+ requirement.
+    """
+    if age is None or age < 0:
+        return "unknown"
     if age <= 17:
         return "0-17"
     if age <= 30:

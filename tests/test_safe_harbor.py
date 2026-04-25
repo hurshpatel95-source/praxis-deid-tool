@@ -37,12 +37,24 @@ class TestAgeToBand:
         assert age_to_band(90) == "76+"
         assert age_to_band(110) == "76+"
 
-    def test_negative_treated_as_zero(self) -> None:
-        assert age_to_band(-5) == "0-17"
+    def test_negative_treated_as_unknown(self) -> None:
+        # Negative age (e.g. future-dated DOB clamped via today.year - dob.year)
+        # MUST NOT silently bucket to "0-17" — that fabricates a pediatric
+        # record from a data-quality bug. "unknown" preserves the row count
+        # without asserting an age. See SECURITY_AUDIT.md finding #2.
+        assert age_to_band(-5) == "unknown"
+        assert age_to_band(-73) == "unknown"
+
+    def test_none_returns_unknown(self) -> None:
+        # NULL DOB at the call site passes None down -> "unknown" band.
+        # See SECURITY_AUDIT.md finding #1.
+        assert age_to_band(None) == "unknown"
 
     def test_every_band_reachable(self) -> None:
-        # Sanity: every documented band is producible.
+        # Sanity: every documented band is producible. "unknown" requires
+        # None or negative input; the rest come from valid ages 0..100.
         produced = {age_to_band(a) for a in range(0, 100, 5)}
+        produced.add(age_to_band(None))
         for band in AGE_BANDS:
             assert band in produced, band
 

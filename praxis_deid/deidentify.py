@@ -136,7 +136,11 @@ class Deidentifier:
         self.stats.patients_in += 1
         try:
             ext = stable_external_id(self._salt, raw["source_id"])
-            age = _age_from_dob(raw["dob"]) if raw.get("dob") else 0
+            # NULL/empty DOB or future-dated DOB -> "unknown" age band, not
+            # silently bucketed to "0-17". Unparseable DOBs still raise
+            # ValueError below and get dropped to drop_reasons (existing
+            # behavior, exercised by test_invalid_row_dropped_with_reason).
+            age: int | None = _age_from_dob(raw["dob"]) if raw.get("dob") else None
             patient = Patient(
                 external_id=ext,
                 practice_id=self.practice_id,

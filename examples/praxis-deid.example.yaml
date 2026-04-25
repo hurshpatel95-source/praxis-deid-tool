@@ -30,9 +30,8 @@ output:
   directory: /var/lib/praxis-deid/out                  # required when type=csv
 
 deidentification:
-  patient_id_salt: REPLACE-ME-WITH-A-LONG-RANDOM-STRING   # >= 32 chars recommended
+  patient_id_salt: REPLACE-ME-WITH-A-LONG-RANDOM-STRING   # required, >= 32 chars (e.g. `openssl rand -hex 32`)
   small_n_threshold: 5                                 # HIPAA Safe Harbor minimum
-  procedure_categorization: default                    # or path to YAML mapping
 
 audit:
   log_path: /var/log/praxis-deid/audit.log             # append-only; rotate via logrotate

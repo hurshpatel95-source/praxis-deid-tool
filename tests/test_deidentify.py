@@ -180,6 +180,48 @@ def test_restricted_zip_suppressed_to_000() -> None:
     assert patients[0].zip_prefix == "000"
 
 
+# --- SECURITY_AUDIT.md finding #1: NULL DOB must NOT bucket to "0-17" ----
+
+def test_null_dob_yields_unknown_age_band_not_pediatric() -> None:
+    """A patient with a missing/empty DOB must NOT be silently classified
+    as pediatric ('0-17'). The audit caught this fabrication risk; we now
+    return 'unknown' so the row survives but doesn't assert an age."""
+    d = _make()
+    raw = _minimal_patient("MRN-NULL-DOB")
+    raw["dob"] = ""  # NULL/empty in source
+    d.add_patient(raw)
+    patients, *_ = d.finalize()
+    assert len(patients) == 1
+    assert patients[0].age_band == "unknown"
+    assert patients[0].age_band != "0-17"
+
+
+def test_missing_dob_key_yields_unknown_age_band() -> None:
+    """Same as null-DOB but the dob key is absent entirely from the source dict."""
+    d = _make()
+    raw = _minimal_patient("MRN-NO-DOB")
+    raw.pop("dob")
+    d.add_patient(raw)
+    patients, *_ = d.finalize()
+    assert len(patients) == 1
+    assert patients[0].age_band == "unknown"
+
+
+# --- SECURITY_AUDIT.md finding #2: future-dated DOB must NOT bucket to "0-17" --
+
+def test_future_dated_dob_yields_unknown_age_band_not_pediatric() -> None:
+    """A future-dated DOB (data-quality bug at the source) used to compute a
+    negative age and silently bucket to '0-17'. Now it returns 'unknown'."""
+    d = _make()
+    raw = _minimal_patient("MRN-FUTURE")
+    raw["dob"] = "2099-01-01"
+    d.add_patient(raw)
+    patients, *_ = d.finalize()
+    assert len(patients) == 1
+    assert patients[0].age_band == "unknown"
+    assert patients[0].age_band != "0-17"
+
+
 # --- Helper -----------------------------------------------------------------
 
 def _minimal_patient(source_id: str, *, zip_code: str = "08201") -> dict[str, str]:

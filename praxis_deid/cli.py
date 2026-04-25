@@ -16,7 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .audit import write_run_record
+from .audit import fingerprint_input_file, get_tool_version, write_run_record
 from .config import Config, load_config
 from .deidentify import Deidentifier
 from .sources import iter_csv_rows
@@ -54,6 +54,21 @@ def _cmd_run(config_path: Path, *, dry_run: bool) -> int:
         salt=cfg.deidentification.patient_id_salt,
         small_n_threshold=cfg.deidentification.small_n_threshold,
     )
+
+    # Forensic fingerprint of every input file BEFORE we ingest, so a
+    # mid-run mutation can't change what we attest to having processed.
+    # See SECURITY_AUDIT.md finding #4.
+    input_files: dict[str, dict[str, object]] = {}
+    for role, path in (
+        ("patients", cfg.source.patients_file),
+        ("appointments", cfg.source.appointments_file),
+        ("providers", cfg.source.providers_file),
+        ("procedures", cfg.source.procedures_file),
+        ("referrals", cfg.source.referrals_file),
+        ("invoices", cfg.source.invoices_file),
+    ):
+        if path is not None and path.exists():
+            input_files[role] = fingerprint_input_file(path)
 
     _ingest_optional(cfg.source.patients_file, deid.add_patient)
     _ingest_optional(cfg.source.appointments_file, deid.add_appointment)
@@ -99,7 +114,9 @@ def _cmd_run(config_path: Path, *, dry_run: bool) -> int:
     write_run_record(
         cfg.audit.log_path,
         {
+            "tool_version": get_tool_version(),
             "practice_id": cfg.practice_id,
+            "input_files": input_files,
             "stats": {
                 "patients_in": deid.stats.patients_in,
                 "patients_out": len(patients),
