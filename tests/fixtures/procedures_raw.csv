@@ -1,0 +1,5 @@
+source_id,patient_source_id,provider_id,procedure_category,procedure_date,revenue_amount
+PROC-001,MRN-001,prov-1,physical_therapy_session,2026-04-15,180
+PROC-002,MRN-002,prov-1,knee_replacement,2026-04-18,18500
+PROC-003,MRN-003,prov-2,imaging_xray,2026-03-25,220
+PROC-004,MRN-005,prov-2,acl_repair,2026-02-20,12800

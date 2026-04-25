@@ -1,0 +1,9 @@
+source_id,patient_source_id,provider_id,appointment_date,appointment_type_category,status,duration_minutes
+APT-001,MRN-001,prov-1,2026-04-15,routine,completed,30
+APT-002,MRN-001,prov-2,2026-04-22,follow_up,completed,15
+APT-003,MRN-002,prov-1,2026-04-10,consult,completed,45
+APT-004,MRN-002,prov-1,2026-04-18,procedure,completed,60
+APT-005,MRN-003,prov-2,2026-03-25,routine,completed,20
+APT-006,MRN-004,prov-1,2026-04-05,routine,no_show,30
+APT-007,MRN-005,prov-2,2026-02-20,consult,completed,45
+APT-008,MRN-006,prov-1,2026-03-10,follow_up,completed,15

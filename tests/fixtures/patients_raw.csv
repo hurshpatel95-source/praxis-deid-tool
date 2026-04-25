@@ -1,0 +1,7 @@
+source_id,first_name,last_name,dob,ssn,phone,email,address,zip,gender,payer_category,patient_status,first_seen_date
+MRN-001,Alice,Smith,1985-03-12,123-45-6789,609-555-0001,alice@example.com,123 Main St,08201,F,BCBS,active,2026-01-15
+MRN-002,Bob,Jones,1972-07-04,234-56-7890,609-555-0002,bob@example.com,456 Oak Ave,08201,M,Aetna,active,2026-01-22
+MRN-003,Carlos,Williams,1968-11-20,345-67-8901,609-555-0003,carlos@example.com,789 Pine Rd,08210,M,Medicare,active,2025-12-10
+MRN-004,Dana,Park,1990-04-30,,609-555-0004,dana@example.com,12 Birch Ln,08201,F,Cigna,active,2026-02-01
+MRN-005,Evan,Khan,2002-09-15,,609-555-0005,evan@example.com,98 Cedar Dr,08220,M,Self,active,2026-02-14
+MRN-006,Fran,Lee,1955-01-08,,609-555-0006,fran@example.com,55 Maple St,08210,F,Medicare,active,2025-11-30
