@@ -24,7 +24,7 @@ Reads CSV exports from your PM system and produces six output CSV files — `pat
 - Patient names, phones, emails, addresses, SSNs, MRNs: **removed**
 - Patient birth dates: replaced with **age bands** (`18-30`, `31-45`, etc.)
 - Patient ZIPs: truncated to **first 3 digits**, suppressed to `000` if HHS lists the prefix as <20,000 population
-- Specific dates: replaced with **`YYYY-MM`** granularity
+- Specific dates: replaced with **`YYYY-MM`** granularity. Appointment rows additionally carry a `day_of_week` field (`mon`/`tue`/.../`sun`) — a Safe Harbor-permitted category derived from the raw date *before* generalization, used by the cloud dashboard's no-show-by-day-of-week analytics
 - Specific procedure codes: emitted as **category strings** (`knee_replacement`, `cleaning`, etc.). The tool passes through the `procedure_category` column from your source — pre-categorize upstream until vertical-specific default mappings ship.
 - Per-record dollar amounts: bucketed into **revenue bands** (`$1000-5000`, etc.)
 - Patient identifiers: replaced with **HMAC-SHA256 hash** of the source ID using a practice-held salt — stable across runs, irreversible without the salt
@@ -106,7 +106,7 @@ The tool expects these columns in your raw CSV exports. Most PM systems already 
 | File | Required columns |
 |---|---|
 | `patients_raw.csv` | `source_id`, `dob`, `zip`, `gender`, `payer_category`, `patient_status`, `first_seen_date` |
-| `appointments_raw.csv` | `source_id`, `patient_source_id`, `provider_id`, `appointment_date`, `appointment_type_category`, `status`, `duration_minutes` |
+| `appointments_raw.csv` | `source_id`, `patient_source_id`, `provider_id`, `appointment_date` (must include day, e.g. `2026-04-15` — needed to derive `day_of_week`), `appointment_type_category`, `status`, `duration_minutes` |
 | `providers_raw.csv` | `id`, `full_name`, `npi`, `specialty`, `active` |
 | `procedures_raw.csv` | `source_id`, `patient_source_id`, `provider_id`, `procedure_category`, `procedure_date`, `revenue_amount` |
 | `referrals_raw.csv` | `source_id`, `referring_provider_id`, `referring_provider_name`, `referring_provider_practice`, `referred_patient_source_id`, `referral_date`, `converted_to_appointment` |

@@ -10,7 +10,8 @@ names — the caller maps source columns to the standard names below.
 Standard input column names (raw, identifying):
   patients:    source_id, first_name, last_name, dob, zip, gender,
                payer_category, patient_status, first_seen_date
-  appointments: source_id, patient_source_id, provider_id, appointment_date,
+  appointments: source_id, patient_source_id, provider_id, appointment_date
+                (must include day component — drives day_of_week emission),
                 appointment_type_category, status, duration_minutes
   providers:   id, full_name, npi, specialty, active
   procedures:  source_id, patient_source_id, provider_id, procedure_category,
@@ -33,6 +34,7 @@ from .hashing import stable_external_id
 from .safe_harbor import (
     age_to_band,
     amount_to_band,
+    date_to_day_of_week,
     date_to_month,
     duration_to_band,
     zip_to_prefix,
@@ -161,12 +163,19 @@ class Deidentifier:
         self.stats.appointments_in += 1
         try:
             duration_raw = float(raw.get("duration_minutes") or 0)
+            # IMPORTANT: derive day_of_week BEFORE date_to_month strips the day.
+            # Once the canonical row exists with appointment_date_month="2026-04"
+            # the day-of-week is unrecoverable; it MUST be emitted as its own
+            # field here. Day-of-week is a Safe Harbor-permitted category, not
+            # a calendar date.
+            raw_date = raw["appointment_date"]
             appt = Appointment(
                 external_id=stable_external_id(self._salt, raw["source_id"]),
                 practice_id=self.practice_id,
                 patient_external_id=stable_external_id(self._salt, raw["patient_source_id"]),
                 provider_id=raw["provider_id"],
-                appointment_date_month=date_to_month(raw["appointment_date"]),
+                appointment_date_month=date_to_month(raw_date),
+                day_of_week=date_to_day_of_week(raw_date),
                 appointment_type_category=raw.get("appointment_type_category", "other"),
                 status=raw.get("status", "completed"),
                 duration_minutes_band=duration_to_band(duration_raw),

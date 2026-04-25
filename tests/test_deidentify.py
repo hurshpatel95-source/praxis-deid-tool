@@ -95,6 +95,78 @@ def test_dates_are_month_granular() -> None:
     assert "15" not in appts[0].appointment_date_month
 
 
+# --- Day-of-week emission (Sprint 4B Phase 2) -----------------------------
+
+def test_appointment_emits_day_of_week_from_raw_date() -> None:
+    """day_of_week MUST be derived from the raw date BEFORE generalization.
+    The canonical row's appointment_date_month strips the day, so this is
+    the only place the DOW signal can be captured."""
+    d = _make()
+    d.add_patient(_minimal_patient("MRN-1"))
+    # 2025-01-13 was a Monday.
+    d.add_appointment(
+        {
+            "source_id": "APT-MON",
+            "patient_source_id": "MRN-1",
+            "provider_id": "prov-1",
+            "appointment_date": "2025-01-13",
+            "appointment_type_category": "routine",
+            "status": "no_show",
+            "duration_minutes": "30",
+        }
+    )
+    # 2025-01-17 was a Friday.
+    d.add_appointment(
+        {
+            "source_id": "APT-FRI",
+            "patient_source_id": "MRN-1",
+            "provider_id": "prov-1",
+            "appointment_date": "2025-01-17",
+            "appointment_type_category": "routine",
+            "status": "no_show",
+            "duration_minutes": "30",
+        }
+    )
+    _, appts, *_ = d.finalize()
+    by_id = {a.external_id: a for a in appts}
+    # external_id is HMAC-stable for the same source_id+salt, but easier to
+    # just locate by date_month + status here.
+    mon = next(a for a in appts if a.day_of_week == "mon")
+    fri = next(a for a in appts if a.day_of_week == "fri")
+    assert mon.appointment_date_month == "2025-01"
+    assert fri.appointment_date_month == "2025-01"
+    # Day component must be gone from the date field, but the DOW survives
+    # in its own field.
+    for a in appts:
+        assert "13" not in a.appointment_date_month
+        assert "17" not in a.appointment_date_month
+    # And every appointment carries one of the 7 valid labels.
+    assert all(a.day_of_week in {"mon", "tue", "wed", "thu", "fri", "sat", "sun"} for a in appts)
+    # external_id keying still works even though we didn't use it above.
+    assert len(by_id) == 2
+
+
+def test_appointment_dropped_when_raw_date_lacks_day() -> None:
+    """A YYYY-MM-only raw date can't yield a day_of_week — row is dropped
+    rather than silently fabricating a Monday."""
+    d = _make()
+    d.add_patient(_minimal_patient("MRN-1"))
+    d.add_appointment(
+        {
+            "source_id": "APT-NODAY",
+            "patient_source_id": "MRN-1",
+            "provider_id": "prov-1",
+            "appointment_date": "2025-01",  # no day component
+            "appointment_type_category": "routine",
+            "status": "completed",
+            "duration_minutes": "30",
+        }
+    )
+    _, appts, *_ = d.finalize()
+    assert appts == []
+    assert d.stats.rows_dropped == 1
+
+
 # --- Spec invariant 4: small-N suppression --------------------------------
 
 def test_small_n_suppression_drops_lone_patient_with_no_touches() -> None:

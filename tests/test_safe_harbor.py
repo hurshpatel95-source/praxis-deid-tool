@@ -4,11 +4,13 @@ import pytest
 
 from praxis_deid.safe_harbor import (
     AGE_BANDS,
+    DAYS_OF_WEEK,
     DURATION_BANDS,
     REVENUE_BANDS,
     RESTRICTED_ZIP3_PREFIXES,
     age_to_band,
     amount_to_band,
+    date_to_day_of_week,
     date_to_month,
     duration_to_band,
     zip_to_prefix,
@@ -132,3 +134,36 @@ class TestDurationToBand:
         produced = {duration_to_band(d) for d in (5, 20, 45, 90, 200)}
         for b in DURATION_BANDS:
             assert b in produced, b
+
+
+class TestDateToDayOfWeek:
+    def test_known_dates(self) -> None:
+        # 2025-01-13 was a Monday; 2025-01-19 a Sunday. Sanity-check both ends.
+        assert date_to_day_of_week("2025-01-13") == "mon"
+        assert date_to_day_of_week("2025-01-14") == "tue"
+        assert date_to_day_of_week("2025-01-15") == "wed"
+        assert date_to_day_of_week("2025-01-16") == "thu"
+        assert date_to_day_of_week("2025-01-17") == "fri"
+        assert date_to_day_of_week("2025-01-18") == "sat"
+        assert date_to_day_of_week("2025-01-19") == "sun"
+
+    def test_iso_datetime_accepted(self) -> None:
+        # YYYY-MM-DDThh:mm:ss is acceptable — day comes from the date part.
+        assert date_to_day_of_week("2025-01-13T10:30:00") == "mon"
+
+    def test_yyyy_mm_only_rejected(self) -> None:
+        # Day-of-week cannot be derived from year+month alone — the de-id tool
+        # must call this BEFORE date_to_month strips the day.
+        with pytest.raises(ValueError):
+            date_to_day_of_week("2025-01")
+
+    def test_unparseable_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            date_to_day_of_week("nope")
+        with pytest.raises(ValueError):
+            date_to_day_of_week("2025/01/13")  # wrong separators
+
+    def test_every_day_reachable(self) -> None:
+        # Walk a full week starting Monday 2025-01-13; every label is produced.
+        produced = {date_to_day_of_week(f"2025-01-{13 + i:02d}") for i in range(7)}
+        assert produced == set(DAYS_OF_WEEK)

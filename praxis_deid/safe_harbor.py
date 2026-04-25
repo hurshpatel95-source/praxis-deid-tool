@@ -93,6 +93,45 @@ def date_to_month(iso_date: str) -> str:
     return f"{year}-{month}"
 
 
+# Day-of-week labels. Lowercase 3-char codes match the cloud canonical enum
+# (lib/canonical/primitives.ts::dayOfWeek). The order matches Python's
+# date.weekday() which returns Monday=0 ... Sunday=6.
+DAYS_OF_WEEK: tuple[str, ...] = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def date_to_day_of_week(iso_date: str) -> str:
+    """ISO date (YYYY-MM-DD or YYYY-MM-DDT...) -> 'mon'..'sun'.
+
+    Day-of-week is a CATEGORY, not a calendar date — Safe Harbor §164.514(b)
+    permits its emission alongside the YYYY-MM generalization (it carries no
+    more identifying power than "month" itself, and is essential for the
+    no-show-by-day-of-week analytics the dashboard surfaces).
+
+    Must be derived BEFORE date_to_month strips the day; in canonical land
+    the day is already gone, so this conversion is irrecoverable downstream.
+
+    Raises ValueError if the day component is missing (YYYY-MM only) or
+    unparseable. Year and month alone cannot determine a day-of-week.
+    """
+    s = iso_date.strip()
+    if len(s) < 10:
+        raise ValueError(f"need YYYY-MM-DD to derive day-of-week, got: {iso_date!r}")
+    # Reject obviously bad separators early — date.fromisoformat below would
+    # throw ValueError but with a less specific message.
+    if s[4] != "-" or s[7] != "-":
+        raise ValueError(f"unparseable date for day-of-week: {iso_date!r}")
+    try:
+        # fromisoformat accepts "YYYY-MM-DD" and "YYYY-MM-DDTHH:MM:SS".
+        from datetime import date as _date, datetime as _datetime
+        if "T" in s or " " in s:
+            d = _datetime.fromisoformat(s).date()
+        else:
+            d = _date.fromisoformat(s[:10])
+    except ValueError as err:
+        raise ValueError(f"unparseable date for day-of-week: {iso_date!r}") from err
+    return DAYS_OF_WEEK[d.weekday()]
+
+
 # Revenue bands: per-record amounts get bucketed; aggregate totals can be exact.
 REVENUE_BANDS: tuple[str, ...] = (
     "$0-100",

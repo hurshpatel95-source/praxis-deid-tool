@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 
-from .safe_harbor import AGE_BANDS, DURATION_BANDS, REVENUE_BANDS
+from .safe_harbor import AGE_BANDS, DAYS_OF_WEEK, DURATION_BANDS, REVENUE_BANDS
 
 # --- Allowed enum values (kept in sync with lib/canonical/primitives.ts) ---
 GENDERS = frozenset({"F", "M", "X", "unknown"})
@@ -24,6 +24,7 @@ APPOINTMENT_STATUSES = frozenset(
 APPOINTMENT_TYPE_CATEGORIES = frozenset(
     {"routine", "consult", "follow_up", "procedure", "imaging", "urgent", "telehealth", "other"}
 )
+DAY_OF_WEEK_VALUES = frozenset(DAYS_OF_WEEK)
 INVOICE_AGE_BUCKETS = frozenset({"current", "30-60", "60-90", "90+"})
 INVOICE_STATUSES = frozenset({"paid", "pending", "overdue", "written_off"})
 
@@ -70,6 +71,10 @@ class Appointment:
     patient_external_id: str
     provider_id: str
     appointment_date_month: str
+    # day_of_week is a Safe Harbor-permitted CATEGORY derived from the raw
+    # date BEFORE date_to_month strips the day. Drives no-show-by-DOW
+    # analytics that the cloud cannot recover from a YYYY-MM date alone.
+    day_of_week: str
     appointment_type_category: str
     status: str
     duration_minutes_band: str
@@ -80,6 +85,7 @@ class Appointment:
         _check("patient_external_id", self.patient_external_id, len(self.patient_external_id) >= 8)
         _check("provider_id", self.provider_id, len(self.provider_id) >= 1)
         _check("appointment_date_month", self.appointment_date_month, bool(_MONTH_RE.match(self.appointment_date_month)))
+        _check("day_of_week", self.day_of_week, self.day_of_week in DAY_OF_WEEK_VALUES)
         _check("appointment_type_category", self.appointment_type_category, self.appointment_type_category in APPOINTMENT_TYPE_CATEGORIES)
         _check("status", self.status, self.status in APPOINTMENT_STATUSES)
         _check("duration_minutes_band", self.duration_minutes_band, self.duration_minutes_band in DURATION_BANDS)
