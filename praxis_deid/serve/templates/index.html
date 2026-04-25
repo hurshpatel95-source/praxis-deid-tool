@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Praxis de-identification &mdash; local</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <h1>Praxis de-identification &mdash; local</h1>
+    <p class="subtitle">
+      This UI runs on this machine only. Nothing you upload here is sent
+      over the network. The de-identified output stays in a folder on
+      this computer until you explicitly move it.
+    </p>
+  </header>
+
+  <main>
+    <form id="run-form" autocomplete="off">
+
+      <section class="card">
+        <h2>1. Configuration</h2>
+        <div class="grid">
+          <label>
+            <span>Practice ID</span>
+            <input type="text" name="practice_id" required
+                   placeholder="UUID issued by Praxis cloud">
+            <small>The practice_id Praxis issued you. UUID format.</small>
+          </label>
+
+          <label>
+            <span>Patient ID salt</span>
+            <div class="input-row">
+              <input type="text" name="patient_id_salt" id="salt-input"
+                     required minlength="32"
+                     placeholder=">= 32 chars; openssl rand -hex 32">
+              <button type="button" id="gen-salt-btn">Generate</button>
+            </div>
+            <small>
+              Save this somewhere safe (1Password, sealed envelope). Losing
+              it means losing patient continuity across runs. Never logged.
+            </small>
+          </label>
+
+          <label>
+            <span>Small-N threshold</span>
+            <input type="number" name="small_n_threshold" value="5"
+                   min="1" max="50" required>
+            <small>HIPAA Safe Harbor minimum is 5. Lower only for testing.</small>
+          </label>
+
+          <label>
+            <span>Audit log path (optional)</span>
+            <input type="text" name="audit_log_path"
+                   placeholder="leave blank to write inside the run's temp dir">
+            <small>Append-only NDJSON. Rotate via logrotate.</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>2. Input files</h2>
+        <p class="hint">
+          Pick the CSV exports from your PM system. Patients is required;
+          the others are optional but recommended.
+        </p>
+        <div class="grid">
+          {% for role in input_roles %}
+          <label class="file-picker">
+            <span>{{ role }}_raw.csv</span>
+            <input type="file" name="{{ role }}" accept=".csv,text/csv"
+                   data-role="{{ role }}">
+            <small class="file-meta" data-meta="{{ role }}">no file selected</small>
+          </label>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="card run-row">
+        <button type="submit" id="run-btn">Run de-identification</button>
+        <span id="status-msg" class="status"></span>
+      </section>
+    </form>
+
+    <section class="card hidden" id="result-card">
+      <h2>3. Result</h2>
+      <div class="result-status" id="result-status"></div>
+
+      <h3>Output folder</h3>
+      <div class="output-folder">
+        <code id="output-dir-text"></code>
+        <button type="button" id="open-folder-btn">Open output folder</button>
+      </div>
+
+      <h3>Files written</h3>
+      <table id="files-table">
+        <thead>
+          <tr><th>file</th><th>rows</th><th>bytes</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+
+      <h3>Audit record</h3>
+      <p class="hint">
+        Same envelope written to <code id="audit-log-path-text"></code>. Includes
+        SHA-256 fingerprints of every input file and per-stage row counts.
+      </p>
+      <pre id="audit-record-text"></pre>
+
+      <h3>PHI scan</h3>
+      <p class="hint">
+        Belt-and-suspenders post-hoc scan. The de-id pipeline is the
+        actual privacy boundary; this ensures no obvious leaks slipped
+        into the output (SSN, email, phone, ZIP+4, day-resolution dates).
+      </p>
+      <div id="phi-scan-results"></div>
+    </section>
+  </main>
+
+  <footer>
+    <small>
+      Praxis de-id tool &mdash; local UI. No outbound network calls.
+      <span id="version-tag"></span>
+    </small>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

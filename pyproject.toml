@@ -28,6 +28,22 @@ dev = [
   "mypy>=1.10",
   "types-PyYAML",
   "types-requests",
+  # `serve` extras pulled in for tests of the local web UI; the FastAPI
+  # TestClient depends on httpx, which we therefore need in dev too.
+  "fastapi>=0.110",
+  "uvicorn>=0.30",
+  "python-multipart>=0.0.9",
+  "jinja2>=3.1",
+  "httpx>=0.27",
+]
+# Optional UI extras. Loaded only when the user runs `praxis-deid serve`;
+# the base CLI (`run`, `version`) keeps working without these. Everything
+# here is offline-capable — no analytics, no CDN, no telemetry.
+serve = [
+  "fastapi>=0.110",
+  "uvicorn>=0.30",
+  "python-multipart>=0.0.9",
+  "jinja2>=3.1",
 ]
 
 [project.scripts]
@@ -39,6 +55,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["praxis_deid*"]
+
+[tool.setuptools.package-data]
+# Bundle the local web-UI assets so `pip install praxis-deid[serve]`
+# ships a working server without needing a separate static-asset step.
+"praxis_deid.serve" = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

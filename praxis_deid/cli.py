@@ -31,6 +31,33 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--config", required=True, type=Path, help="Path to config YAML")
     run.add_argument("--dry-run", action="store_true", help="Process but do not write or upload")
 
+    serve = sub.add_parser(
+        "serve",
+        help="Start the local web UI (requires the [serve] extra)",
+        description=(
+            "Start a localhost-only web UI for interactive de-identification "
+            "runs. Requires the [serve] extra: pip install praxis-deid[serve]. "
+            "Bind host defaults to 127.0.0.1; binding anything else requires "
+            "--allow-remote and prints a loud warning."
+        ),
+    )
+    serve.add_argument("--port", type=int, default=8765, help="TCP port (default: 8765)")
+    serve.add_argument(
+        "--host", default="127.0.0.1",
+        help="Bind host (default: 127.0.0.1; refuses non-loopback without --allow-remote)",
+    )
+    serve.add_argument(
+        "--open", dest="open_browser", action="store_true",
+        help="Open the UI in the default browser once the server is up",
+    )
+    serve.add_argument(
+        "--allow-remote", action="store_true",
+        help=(
+            "Permit binding non-loopback hosts. The UI uploads raw PM data; "
+            "ONLY use this on a trusted network."
+        ),
+    )
+
     sub.add_parser("version", help="Print version")
 
     args = parser.parse_args(argv)
@@ -42,6 +69,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "run":
         return _cmd_run(args.config, dry_run=args.dry_run)
+
+    if args.cmd == "serve":
+        return _cmd_serve(
+            host=args.host,
+            port=args.port,
+            open_browser=args.open_browser,
+            allow_remote=args.allow_remote,
+        )
 
     return 1
 
@@ -140,6 +175,67 @@ def _cmd_run(config_path: Path, *, dry_run: bool) -> int:
         f"{len(procedures)} procedures, {len(invoices)} invoices "
         f"(dropped {deid.stats.rows_dropped}, small-N suppressed {deid.stats.small_n_suppressions})"
     )
+    return 0
+
+
+def _cmd_serve(
+    *,
+    host: str,
+    port: int,
+    open_browser: bool,
+    allow_remote: bool,
+) -> int:
+    """Boot the FastAPI app under uvicorn.
+
+    Imports are lazy so the base package install (no FastAPI) still loads
+    `praxis_deid.cli` cleanly — the existing `run` command must keep
+    working without the [serve] extra.
+    """
+    try:
+        from .serve.app import build_app, validate_bind_host
+    except ImportError as err:
+        print(
+            "praxis_deid serve requires the [serve] extra: "
+            "pip install praxis-deid[serve]\n"
+            f"(import failed: {err})",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        validate_bind_host(host, allow_remote=allow_remote)
+    except ValueError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+
+    try:
+        import uvicorn
+    except ImportError:
+        print(
+            "praxis_deid serve requires the [serve] extra: "
+            "pip install praxis-deid[serve]",
+            file=sys.stderr,
+        )
+        return 2
+
+    app = build_app()
+    url = f"http://{host}:{port}/"
+    print(f"praxis-deid serve: listening on {url} (Ctrl-C to stop)")
+
+    if open_browser:
+        # Opens via the OS's default browser handler — no network call from here.
+        import threading
+        import webbrowser
+
+        def _open_when_ready() -> None:
+            import time
+            # Tiny delay so the UI doesn't pop before uvicorn binds.
+            time.sleep(0.5)
+            webbrowser.open(url)
+
+        threading.Thread(target=_open_when_ready, daemon=True).start()
+
+    uvicorn.run(app, host=host, port=port, log_level="info", access_log=False)
     return 0
 
 

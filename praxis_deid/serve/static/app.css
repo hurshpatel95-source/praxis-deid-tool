@@ -1,0 +1,223 @@
+/* Praxis de-id local UI — minimal, no external assets. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+               sans-serif;
+  background: #f5f6f8;
+  color: #1d2025;
+  line-height: 1.45;
+}
+
+header, main, footer {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  margin: 0;
+  color: #555a63;
+  max-width: 70ch;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e3e5ea;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: #3a4049;
+}
+
+.card h3 {
+  font-size: 0.95rem;
+  margin: 1.25rem 0 0.5rem;
+  color: #3a4049;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem 1.5rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+label > span {
+  font-weight: 600;
+  color: #1d2025;
+}
+
+label small {
+  color: #6b717b;
+  font-size: 0.78rem;
+}
+
+input[type="text"],
+input[type="number"] {
+  padding: 0.5rem 0.6rem;
+  font-size: 0.95rem;
+  border: 1px solid #c7ccd4;
+  border-radius: 5px;
+  font-family: inherit;
+  background: #fcfcfd;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: -1px;
+  border-color: #2563eb;
+}
+
+input[type="file"] {
+  padding: 0.35rem 0;
+  font-size: 0.85rem;
+}
+
+.input-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.input-row input { flex: 1; }
+
+button {
+  background: #1d2025;
+  color: #ffffff;
+  border: none;
+  padding: 0.55rem 1.1rem;
+  border-radius: 5px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button[type="button"] {
+  background: #475569;
+}
+
+button:hover { filter: brightness(1.1); }
+button:disabled {
+  background: #94a3b8;
+  cursor: wait;
+}
+
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.status { color: #6b717b; font-size: 0.9rem; }
+.status.ok { color: #15803d; font-weight: 600; }
+.status.err { color: #b91c1c; font-weight: 600; }
+
+.hint {
+  color: #6b717b;
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem;
+}
+
+.hidden { display: none; }
+
+.result-status {
+  padding: 0.75rem 1rem;
+  border-radius: 5px;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+.result-status.ok { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.result-status.err { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+.output-folder {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.output-folder code {
+  background: #f1f3f6;
+  padding: 0.35rem 0.55rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid #e3e5ea;
+}
+
+th {
+  background: #f7f8fa;
+  font-weight: 600;
+  color: #475569;
+}
+
+pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.85rem 1rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+
+.phi-row {
+  padding: 0.5rem 0.75rem;
+  border-radius: 5px;
+  margin-bottom: 0.4rem;
+  font-size: 0.88rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.phi-row.clean { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.phi-row.dirty { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+.phi-hits {
+  margin: 0.25rem 0 0.5rem 1rem;
+  padding-left: 1rem;
+  font-size: 0.82rem;
+  color: #7f1d1d;
+}
+
+footer {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  padding-bottom: 2rem;
+}

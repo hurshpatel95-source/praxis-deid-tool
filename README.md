@@ -58,6 +58,39 @@ Requires Python 3.10+.
 
 6. Six de-identified CSVs land in `output.directory`. Upload them to Praxis (SFTP / email attachment / `praxis-app` admin upload UI).
 
+## Run with a UI
+
+For practices that prefer a point-and-click interface over a YAML config + cron, the tool ships an optional **localhost-only web UI** that an IT admin can use without reading source.
+
+Install the extra (pulls in FastAPI + uvicorn + jinja2 + python-multipart — all offline-capable, no CDNs or telemetry):
+
+```bash
+pip install praxis-deid[serve]
+```
+
+Start the server:
+
+```bash
+praxis-deid serve            # binds 127.0.0.1:8765, no browser auto-open
+praxis-deid serve --open     # also opens the UI in your default browser
+praxis-deid serve --port 9000
+```
+
+Then open http://127.0.0.1:8765/ and the page lets you:
+
+1. **Configure** — practice ID, patient ID salt (with a "Generate" button that runs `crypto.getRandomValues` in-browser), small-N threshold, audit log path
+2. **Pick the six input CSVs** from disk
+3. **Click Run** — drives the same `Deidentifier` pipeline as the CLI
+4. **Review the result** — output folder path + per-file row/byte counts + a pretty-printed audit envelope (with input file SHA-256 fingerprints) + a post-hoc PHI scan over each output CSV (SSN/email/phone/ZIP+4/day-resolution dates)
+5. **Open the output folder** in Finder/Explorer with one click
+
+### Safety guards
+
+- **Default bind is `127.0.0.1`.** The UI accepts raw PM data uploads; binding non-loopback would expose those uploads on the LAN.
+- **`--allow-remote` is required** to bind any non-loopback host (e.g. `0.0.0.0`, `192.168.x.y`). Doing so prints a loud warning to stderr — only use behind a trusted firewall.
+- **No outbound network calls.** Templates and static assets are served from the installed package; nothing in the [serve] extra phones home.
+- **The salt is never logged**, never echoed back over the wire, and never written to the audit envelope — same invariant as the CLI.
+
 ## Schedule it
 
 Standard cron / Task Scheduler / systemd timer. Example for nightly 2am via cron:
