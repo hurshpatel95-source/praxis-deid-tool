@@ -3,6 +3,15 @@
 [![Tests](https://github.com/hurshpatel95-source/praxis-deid-tool/actions/workflows/test.yml/badge.svg)](.)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+> ⚠️ **PRE-PRODUCTION.** This tool is published for source review and HIPAA-consultant validation. Not yet certified for production deployment.
+>
+> - 5 critical findings from the internal security audit are already fixed (see commit [`52f2afc`](https://github.com/hurshpatel95-source/praxis-deid-tool/commit/52f2afc) and [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md)).
+> - HIPAA consultant validation is scheduled before first customer deployment.
+> - 63/63 pytest assertions pass on every commit; no known active leakage paths.
+> - **MIT-licensed — use at your own risk.** If you deploy this against real PHI before the audit clears, you own the compliance posture.
+>
+> Issues + PRs welcome. For the privacy architecture this tool is part of, see [praxishealth.ai/security](https://praxis-app-production.up.railway.app/security).
+
 A small, auditable Python tool that runs **at your practice, on your infrastructure**, and produces HIPAA Safe Harbor-compliant aggregates from your raw practice management data.
 
 > Patient data never leaves your practice in identifiable form. Praxis cloud only ever sees this tool's output.
