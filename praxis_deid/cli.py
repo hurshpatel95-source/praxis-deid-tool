@@ -60,6 +60,13 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("version", help="Print version")
 
+    # `wizard` subcommand: schema-mapping setup wizard for new PMS connections.
+    # Registered here but implemented in praxis_deid.wizard.cli; the wizard
+    # module lives off to the side so the locked v0.1 modules
+    # (deidentify.py, safe_harbor.py, hashing.py) don't pick up new deps.
+    from .wizard.cli import add_wizard_subparser
+    add_wizard_subparser(sub)
+
     args = parser.parse_args(argv)
 
     if args.cmd == "version":
@@ -77,6 +84,10 @@ def main(argv: list[str] | None = None) -> int:
             open_browser=args.open_browser,
             allow_remote=args.allow_remote,
         )
+
+    if args.cmd == "wizard":
+        from .wizard.cli import dispatch as wizard_dispatch
+        return wizard_dispatch(args)
 
     return 1
 

@@ -35,6 +35,19 @@ dev = [
   "python-multipart>=0.0.9",
   "jinja2>=3.1",
   "httpx>=0.27",
+  # `wizard` extras for tests of the Claude-API-assisted setup wizard.
+  # Tests use recorded fixtures (no live API), but the import path is
+  # exercised — the SDK has to be installed.
+  "anthropic>=0.40",
+]
+# Wizard-1 extras: schema-mapping setup wizard for new PMS connections.
+# Pulled in only when the practice runs `praxis-deid wizard ...` for
+# onboarding; the steady-state `run` command works without it.
+wizard = [
+  "anthropic>=0.40",
+  # SQLAlchemy is optional within wizard — required only if the practice
+  # opts into live-DB reflection. JSON-dump and SQL-dump readers don't
+  # need it.
 ]
 # Optional UI extras. Loaded only when the user runs `praxis-deid serve`;
 # the base CLI (`run`, `version`) keeps working without these. Everything
