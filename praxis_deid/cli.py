@@ -67,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     from .wizard.cli import add_wizard_subparser
     add_wizard_subparser(sub)
 
+    # `extract` subcommand (Phase-C): per-extension PMS-side data pull
+    # producing the canonical Phase-C CSVs. Same don't-touch-locked-modules
+    # discipline as wizard — extractors live in praxis_deid.extractors.
+    from .extractors.cli import add_extract_subparser
+    add_extract_subparser(sub)
+
     args = parser.parse_args(argv)
 
     if args.cmd == "version":
@@ -88,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "wizard":
         from .wizard.cli import dispatch as wizard_dispatch
         return wizard_dispatch(args)
+
+    if args.cmd == "extract":
+        from .extractors.cli import dispatch as extract_dispatch
+        return extract_dispatch(args)
 
     return 1
 
