@@ -1,0 +1,449 @@
+{
+  "pms_name": "open_dental",
+  "source_description": "Snapshot of relevant tables from Open Dental's public schema (https://opendental.com/manual/databasestructure.html). Schema metadata only; no row data. Includes only the tables touched by canonical extensions A-F per METRIC_COVERAGE_AUDIT.md §4.1.",
+  "tables": {
+    "patient": {
+      "name": "patient",
+      "description": "Top-level patient record. Open Dental's primary patient PII container.",
+      "columns": [
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "Primary key. Source patient identifier."},
+        {"name": "LName", "type": "VARCHAR(100)", "nullable": true, "description": "Last name. PHI."},
+        {"name": "FName", "type": "VARCHAR(100)", "nullable": true, "description": "First name. PHI."},
+        {"name": "Birthdate", "type": "DATE", "nullable": true, "description": "Date of birth. PHI."},
+        {"name": "Gender", "type": "TINYINT", "nullable": false, "description": "0=M, 1=F, 2=Unknown."},
+        {"name": "PriProv", "type": "BIGINT", "nullable": true, "description": "Primary provider FK -> provider.ProvNum."},
+        {"name": "DateLastVisit", "type": "DATE", "nullable": true, "description": "Most recent completed visit date (Extension F)."},
+        {"name": "ReferredBy", "type": "VARCHAR(255)", "nullable": true, "description": "Free-text referral source string in some installs; in others a FK -> definition.DefNum (category=referral source)."},
+        {"name": "PatStatus", "type": "TINYINT", "nullable": false, "description": "0=Patient,1=NonPatient,2=Inactive,3=Archived,4=Deceased,5=Prospective."},
+        {"name": "Zip", "type": "VARCHAR(100)", "nullable": true, "description": "ZIP code. PHI; truncated to ZIP-3 at de-id."},
+        {"name": "DateFirstVisit", "type": "DATE", "nullable": true, "description": "First visit date."}
+      ],
+      "primary_key": ["PatNum"],
+      "foreign_keys": [
+        {"column": "PriProv", "referenced_table": "provider", "referenced_column": "ProvNum"}
+      ],
+      "indexes": ["idx_patient_lname", "idx_patient_priprov"]
+    },
+    "provider": {
+      "name": "provider",
+      "description": "Provider table. Both dentists and hygienists. Provider data is not PHI per BAA invariants provider carve-out.",
+      "columns": [
+        {"name": "ProvNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "Abbr", "type": "VARCHAR(50)", "nullable": true, "description": "Short identifier shown in schedule UI."},
+        {"name": "LName", "type": "VARCHAR(100)", "nullable": true, "description": "Last name."},
+        {"name": "FName", "type": "VARCHAR(100)", "nullable": true, "description": "First name."},
+        {"name": "Specialty", "type": "BIGINT", "nullable": true, "description": "FK -> definition.DefNum (category=specialty)."},
+        {"name": "IsHygienist", "type": "TINYINT", "nullable": false, "description": "0/1. Hygienists count separately for productivity metrics."},
+        {"name": "HourlyProdGoalAmt", "type": "DOUBLE", "nullable": true, "description": "Goal-tracking; not actual rate."},
+        {"name": "HourlyRate", "type": "DOUBLE", "nullable": true, "description": "Provider hourly rate (Extension E)."},
+        {"name": "IsNotPerson", "type": "TINYINT", "nullable": false, "description": "1 = pseudo-provider (e.g. an entity, lab). Exclude from provider metrics."}
+      ],
+      "primary_key": ["ProvNum"],
+      "foreign_keys": [],
+      "indexes": []
+    },
+    "appointment": {
+      "name": "appointment",
+      "description": "One row per scheduled or completed appointment.",
+      "columns": [
+        {"name": "AptNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient."},
+        {"name": "ProvNum", "type": "BIGINT", "nullable": false, "description": "FK -> provider (primary provider on the appointment)."},
+        {"name": "ProvHyg", "type": "BIGINT", "nullable": true, "description": "FK -> provider (hygienist)."},
+        {"name": "AptDateTime", "type": "DATETIME", "nullable": false, "description": "Scheduled start. PHI date is truncated to month at de-id."},
+        {"name": "Op", "type": "BIGINT", "nullable": true, "description": "FK -> operatory.OperatoryNum (chair)."},
+        {"name": "AptStatus", "type": "TINYINT", "nullable": false, "description": "1=Scheduled,2=Complete,3=UnschedList,4=ASAP,5=Broken,6=Planned,7=PtNote,8=PtNoteCompleted."},
+        {"name": "AptLength", "type": "INT", "nullable": false, "description": "Duration in 5-minute increments (legacy) or minutes; check Pattern."},
+        {"name": "Pattern", "type": "VARCHAR(255)", "nullable": true, "description": "Slot pattern string; X=provider time, /=assistant time. Used to derive duration."},
+        {"name": "DateTStamp", "type": "TIMESTAMP", "nullable": false, "description": "Last modified."}
+      ],
+      "primary_key": ["AptNum"],
+      "foreign_keys": [
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"},
+        {"column": "ProvNum", "referenced_table": "provider", "referenced_column": "ProvNum"},
+        {"column": "Op", "referenced_table": "operatory", "referenced_column": "OperatoryNum"}
+      ],
+      "indexes": ["idx_appt_patnum", "idx_appt_provnum", "idx_appt_aptdatetime"]
+    },
+    "operatory": {
+      "name": "operatory",
+      "description": "Operatory (chair) table. Drives chair-level capacity metrics (Extension C).",
+      "columns": [
+        {"name": "OperatoryNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "OpName", "type": "VARCHAR(100)", "nullable": true, "description": "Display name e.g. 'Op 1', 'Hygiene 2'."},
+        {"name": "Abbrev", "type": "VARCHAR(50)", "nullable": true, "description": "Short label."},
+        {"name": "IsHidden", "type": "TINYINT", "nullable": false, "description": "Soft-delete flag."},
+        {"name": "ProvDentist", "type": "BIGINT", "nullable": true, "description": "Default dentist FK -> provider.ProvNum (may be NULL = any provider)."},
+        {"name": "ProvHygienist", "type": "BIGINT", "nullable": true, "description": "Default hygienist FK -> provider.ProvNum."}
+      ],
+      "primary_key": ["OperatoryNum"],
+      "foreign_keys": [
+        {"column": "ProvDentist", "referenced_table": "provider", "referenced_column": "ProvNum"},
+        {"column": "ProvHygienist", "referenced_table": "provider", "referenced_column": "ProvNum"}
+      ],
+      "indexes": []
+    },
+    "schedule": {
+      "name": "schedule",
+      "description": "Schedule blocks — provider availability and operatory time. Capacity source for Extension C and Extension E.",
+      "columns": [
+        {"name": "ScheduleNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "SchedDate", "type": "DATE", "nullable": false, "description": "Block date."},
+        {"name": "StartTime", "type": "TIME", "nullable": false, "description": "Block start."},
+        {"name": "StopTime", "type": "TIME", "nullable": false, "description": "Block end."},
+        {"name": "SchedType", "type": "TINYINT", "nullable": false, "description": "0=Practice,1=Provider,2=Blockout."},
+        {"name": "ProvNum", "type": "BIGINT", "nullable": true, "description": "FK -> provider when SchedType=1."},
+        {"name": "BlockoutType", "type": "BIGINT", "nullable": true, "description": "FK -> definition for blockout reason."},
+        {"name": "Note", "type": "TEXT", "nullable": true, "description": "Free-text note."}
+      ],
+      "primary_key": ["ScheduleNum"],
+      "foreign_keys": [
+        {"column": "ProvNum", "referenced_table": "provider", "referenced_column": "ProvNum"}
+      ],
+      "indexes": ["idx_sched_date", "idx_sched_provnum"]
+    },
+    "scheduleop": {
+      "name": "scheduleop",
+      "description": "Many-to-many: schedule block <-> operatory. Each row attaches one block to one chair.",
+      "columns": [
+        {"name": "ScheduleOpNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "ScheduleNum", "type": "BIGINT", "nullable": false, "description": "FK -> schedule.ScheduleNum."},
+        {"name": "OperatoryNum", "type": "BIGINT", "nullable": false, "description": "FK -> operatory.OperatoryNum."}
+      ],
+      "primary_key": ["ScheduleOpNum"],
+      "foreign_keys": [
+        {"column": "ScheduleNum", "referenced_table": "schedule", "referenced_column": "ScheduleNum"},
+        {"column": "OperatoryNum", "referenced_table": "operatory", "referenced_column": "OperatoryNum"}
+      ],
+      "indexes": []
+    },
+    "treatplan": {
+      "name": "treatplan",
+      "description": "One row per treatment plan presented. Source for Extension A.",
+      "columns": [
+        {"name": "TreatPlanNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient."},
+        {"name": "DateTP", "type": "DATE", "nullable": false, "description": "Date plan was presented."},
+        {"name": "Heading", "type": "VARCHAR(255)", "nullable": true, "description": "Plan heading text."},
+        {"name": "Note", "type": "TEXT", "nullable": true, "description": "Free-text plan note."},
+        {"name": "ResponsibleParty", "type": "BIGINT", "nullable": true, "description": "FK -> patient (responsible party for billing)."},
+        {"name": "DocNum", "type": "BIGINT", "nullable": true, "description": "FK -> document (saved PDF of plan)."},
+        {"name": "TPStatus", "type": "TINYINT", "nullable": false, "description": "0=Active,1=Inactive,2=Saved. NOTE: 'accepted/declined/expired' is NOT a column — derive from accepted_date NULL/non-NULL plus presentation order."},
+        {"name": "SecUserNumEntry", "type": "BIGINT", "nullable": true, "description": "User who created the plan (audit)."},
+        {"name": "SecDateEntry", "type": "DATE", "nullable": true, "description": "Date plan was created in DB."},
+        {"name": "DateTSigned", "type": "DATETIME", "nullable": true, "description": "Date patient signed (electronic signature) — Open Dental's closest thing to 'accepted_date'."},
+        {"name": "DateTPracticeSigned", "type": "DATETIME", "nullable": true, "description": "Date practice counter-signed."}
+      ],
+      "primary_key": ["TreatPlanNum"],
+      "foreign_keys": [
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"}
+      ],
+      "indexes": ["idx_treatplan_patnum", "idx_treatplan_datetp"]
+    },
+    "treatplanattach": {
+      "name": "treatplanattach",
+      "description": "Junction table: links a treatplan to its constituent procedures (proctp).",
+      "columns": [
+        {"name": "TreatPlanAttachNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "TreatPlanNum", "type": "BIGINT", "nullable": false, "description": "FK -> treatplan."},
+        {"name": "ProcNum", "type": "BIGINT", "nullable": false, "description": "FK -> procedurelog (when plan ties to scheduled/completed procedures) OR proctp."},
+        {"name": "Priority", "type": "BIGINT", "nullable": true, "description": "Display order."}
+      ],
+      "primary_key": ["TreatPlanAttachNum"],
+      "foreign_keys": [
+        {"column": "TreatPlanNum", "referenced_table": "treatplan", "referenced_column": "TreatPlanNum"}
+      ],
+      "indexes": []
+    },
+    "proctp": {
+      "name": "proctp",
+      "description": "Procedure-level rows on a treatment plan. Source for plan_dollars (sum FeeAmt) and procedure_category in Extension A.",
+      "columns": [
+        {"name": "ProcTPNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "TreatPlanNum", "type": "BIGINT", "nullable": false, "description": "FK -> treatplan."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient (denormalized)."},
+        {"name": "ProcNumOrig", "type": "BIGINT", "nullable": true, "description": "FK -> procedurelog if this proctp row was created from an existing procedurelog row."},
+        {"name": "ProcCode", "type": "VARCHAR(15)", "nullable": false, "description": "ADA procedure code (D-code)."},
+        {"name": "Priority", "type": "BIGINT", "nullable": true, "description": "FK -> definition (priority category)."},
+        {"name": "FeeAmt", "type": "DOUBLE", "nullable": false, "description": "Fee for this procedure on this plan."},
+        {"name": "TaxAmt", "type": "DOUBLE", "nullable": false, "description": "Tax (rare in dental)."},
+        {"name": "ProvNum", "type": "BIGINT", "nullable": true, "description": "FK -> provider (planning provider)."},
+        {"name": "Surf", "type": "VARCHAR(20)", "nullable": true, "description": "Tooth surface — clinical data."}
+      ],
+      "primary_key": ["ProcTPNum"],
+      "foreign_keys": [
+        {"column": "TreatPlanNum", "referenced_table": "treatplan", "referenced_column": "TreatPlanNum"},
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"},
+        {"column": "ProvNum", "referenced_table": "provider", "referenced_column": "ProvNum"}
+      ],
+      "indexes": ["idx_proctp_treatplannum", "idx_proctp_patnum"]
+    },
+    "procedurelog": {
+      "name": "procedurelog",
+      "description": "One row per procedure (planned, in-progress, or completed). The all-purpose procedure table.",
+      "columns": [
+        {"name": "ProcNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient."},
+        {"name": "AptNum", "type": "BIGINT", "nullable": true, "description": "FK -> appointment (NULL if not scheduled)."},
+        {"name": "ProvNum", "type": "BIGINT", "nullable": false, "description": "FK -> provider."},
+        {"name": "ProcDate", "type": "DATE", "nullable": false, "description": "Date of service."},
+        {"name": "ProcStatus", "type": "TINYINT", "nullable": false, "description": "1=Treatment Planned,2=Complete,3=Existing,4=Existing-Other,5=Referred,6=Deleted,7=Condition,8=InProgress,9=Locked,10=Invalid."},
+        {"name": "ProcCode", "type": "VARCHAR(15)", "nullable": false, "description": "ADA D-code."},
+        {"name": "ProcFee", "type": "DOUBLE", "nullable": false, "description": "Fee charged."},
+        {"name": "BaseUnits", "type": "INT", "nullable": false, "description": "Time unit count."},
+        {"name": "UnitQty", "type": "INT", "nullable": false, "description": "Quantity multiplier."},
+        {"name": "PriorityType", "type": "TINYINT", "nullable": true, "description": "Set when proc came from a treatment plan."}
+      ],
+      "primary_key": ["ProcNum"],
+      "foreign_keys": [
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"},
+        {"column": "AptNum", "referenced_table": "appointment", "referenced_column": "AptNum"},
+        {"column": "ProvNum", "referenced_table": "provider", "referenced_column": "ProvNum"}
+      ],
+      "indexes": ["idx_proclog_patnum", "idx_proclog_procdate", "idx_proclog_provnum"]
+    },
+    "claim": {
+      "name": "claim",
+      "description": "One row per insurance claim. Source for Extension B.",
+      "columns": [
+        {"name": "ClaimNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient."},
+        {"name": "DateService", "type": "DATE", "nullable": false, "description": "Date of service the claim covers."},
+        {"name": "DateSent", "type": "DATE", "nullable": true, "description": "Date submitted to clearinghouse."},
+        {"name": "ClaimStatus", "type": "VARCHAR(1)", "nullable": false, "description": "U=unsent,W=waiting,P=primary received,S=secondary received,R=Received,H=hold,N=NeedsResent."},
+        {"name": "DateReceived", "type": "DATE", "nullable": true, "description": "Date of insurance response."},
+        {"name": "PlanNum", "type": "BIGINT", "nullable": true, "description": "FK -> insplan."},
+        {"name": "InsSubNum", "type": "BIGINT", "nullable": true, "description": "FK -> inssub."},
+        {"name": "ClaimType", "type": "VARCHAR(255)", "nullable": false, "description": "P=Primary, S=Secondary, PreAuth, Cap, Other."},
+        {"name": "ClaimFee", "type": "DOUBLE", "nullable": false, "description": "Total billed."},
+        {"name": "InsPayAmt", "type": "DOUBLE", "nullable": false, "description": "Insurance paid."},
+        {"name": "WriteOff", "type": "DOUBLE", "nullable": false, "description": "Write-off amount."},
+        {"name": "PreAuthString", "type": "VARCHAR(40)", "nullable": true, "description": "Pre-authorization tracking number — non-NULL iff prior auth was used."},
+        {"name": "CarrierName", "type": "VARCHAR(255)", "nullable": true, "description": "Denormalized carrier name for reporting."}
+      ],
+      "primary_key": ["ClaimNum"],
+      "foreign_keys": [
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"},
+        {"column": "PlanNum", "referenced_table": "insplan", "referenced_column": "PlanNum"},
+        {"column": "InsSubNum", "referenced_table": "inssub", "referenced_column": "InsSubNum"}
+      ],
+      "indexes": ["idx_claim_patnum", "idx_claim_datesent"]
+    },
+    "claimproc": {
+      "name": "claimproc",
+      "description": "Per-procedure claim breakdown. One row per (procedure, claim).",
+      "columns": [
+        {"name": "ClaimProcNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "ClaimNum", "type": "BIGINT", "nullable": true, "description": "FK -> claim. NULL for not-yet-claimed estimates."},
+        {"name": "ProcNum", "type": "BIGINT", "nullable": true, "description": "FK -> procedurelog."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient (denormalized)."},
+        {"name": "ProvNum", "type": "BIGINT", "nullable": false, "description": "FK -> provider."},
+        {"name": "FeeBilled", "type": "DOUBLE", "nullable": false, "description": "Amount billed for this proc on this claim."},
+        {"name": "InsPayEst", "type": "DOUBLE", "nullable": false, "description": "Estimate of insurance payment."},
+        {"name": "InsPayAmt", "type": "DOUBLE", "nullable": false, "description": "Actual insurance payment."},
+        {"name": "Status", "type": "TINYINT", "nullable": false, "description": "0=Estimate,1=NotReceived,2=Received,3=Preauth,4=Adjustment,5=Supplemental,6=CapClaim,7=CapEstimate,8=CapComplete,9=InsHist."},
+        {"name": "DateCP", "type": "DATE", "nullable": true, "description": "Date payment received."},
+        {"name": "WriteOff", "type": "DOUBLE", "nullable": false, "description": "Write-off amount."},
+        {"name": "CodeSent", "type": "VARCHAR(15)", "nullable": true, "description": "Procedure code sent on the claim."},
+        {"name": "PaymentRow", "type": "BIGINT", "nullable": true, "description": "FK -> claimpayment grouping row."}
+      ],
+      "primary_key": ["ClaimProcNum"],
+      "foreign_keys": [
+        {"column": "ClaimNum", "referenced_table": "claim", "referenced_column": "ClaimNum"},
+        {"column": "ProcNum", "referenced_table": "procedurelog", "referenced_column": "ProcNum"}
+      ],
+      "indexes": ["idx_claimproc_claim", "idx_claimproc_proc"]
+    },
+    "claimpayment": {
+      "name": "claimpayment",
+      "description": "Insurance payment batches. Multiple claimproc rows roll up to one claimpayment.",
+      "columns": [
+        {"name": "ClaimPaymentNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "CheckDate", "type": "DATE", "nullable": false, "description": "Date of insurance check."},
+        {"name": "CheckAmt", "type": "DOUBLE", "nullable": false, "description": "Check amount."},
+        {"name": "CheckNum", "type": "VARCHAR(25)", "nullable": true, "description": "Check or EFT number."},
+        {"name": "BankBranch", "type": "VARCHAR(25)", "nullable": true, "description": "Bank info."},
+        {"name": "Note", "type": "TEXT", "nullable": true, "description": "Free-text."},
+        {"name": "CarrierName", "type": "VARCHAR(255)", "nullable": true, "description": "Denormalized carrier name."},
+        {"name": "PayType", "type": "BIGINT", "nullable": true, "description": "FK -> definition (payment type)."}
+      ],
+      "primary_key": ["ClaimPaymentNum"],
+      "foreign_keys": [],
+      "indexes": []
+    },
+    "clearinghouseslog": {
+      "name": "clearinghouseslog",
+      "description": "Submission log for claims sent through clearinghouses. Tracks rejection codes.",
+      "columns": [
+        {"name": "ClearinghouseLogNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "ClaimNum", "type": "BIGINT", "nullable": false, "description": "FK -> claim."},
+        {"name": "DateTimeSent", "type": "DATETIME", "nullable": false, "description": "Submission timestamp."},
+        {"name": "ResponseStatus", "type": "VARCHAR(50)", "nullable": true, "description": "Clearinghouse response code (Accepted/Rejected/etc.)."},
+        {"name": "ResponseDetail", "type": "TEXT", "nullable": true, "description": "Free-text response detail (denial reason)."}
+      ],
+      "primary_key": ["ClearinghouseLogNum"],
+      "foreign_keys": [
+        {"column": "ClaimNum", "referenced_table": "claim", "referenced_column": "ClaimNum"}
+      ],
+      "indexes": ["idx_chl_claimnum"]
+    },
+    "carrier": {
+      "name": "carrier",
+      "description": "Insurance carrier table.",
+      "columns": [
+        {"name": "CarrierNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "CarrierName", "type": "VARCHAR(255)", "nullable": false, "description": "Free-text carrier name. Map to canonical payer_category in transformations."},
+        {"name": "Phone", "type": "VARCHAR(30)", "nullable": true, "description": "Carrier phone."},
+        {"name": "ElectID", "type": "VARCHAR(20)", "nullable": true, "description": "Electronic-filing payer ID."},
+        {"name": "IsHidden", "type": "TINYINT", "nullable": false, "description": "Soft-delete."}
+      ],
+      "primary_key": ["CarrierNum"],
+      "foreign_keys": [],
+      "indexes": []
+    },
+    "insplan": {
+      "name": "insplan",
+      "description": "Insurance plan. Each carrier may have many plans.",
+      "columns": [
+        {"name": "PlanNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "GroupName", "type": "VARCHAR(255)", "nullable": true, "description": "Employer / plan group."},
+        {"name": "GroupNum", "type": "VARCHAR(20)", "nullable": true, "description": "Plan group number."},
+        {"name": "CarrierNum", "type": "BIGINT", "nullable": false, "description": "FK -> carrier."},
+        {"name": "PlanType", "type": "VARCHAR(1)", "nullable": false, "description": "p=PPO, c=Capitation, '' = standard. Drives payer_category in some practices."},
+        {"name": "IsMedical", "type": "TINYINT", "nullable": false, "description": "1 = medical (not dental). Filter out for dental claims."}
+      ],
+      "primary_key": ["PlanNum"],
+      "foreign_keys": [
+        {"column": "CarrierNum", "referenced_table": "carrier", "referenced_column": "CarrierNum"}
+      ],
+      "indexes": []
+    },
+    "inssub": {
+      "name": "inssub",
+      "description": "Insurance subscription — links a subscriber to a plan.",
+      "columns": [
+        {"name": "InsSubNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "PlanNum", "type": "BIGINT", "nullable": false, "description": "FK -> insplan."},
+        {"name": "Subscriber", "type": "BIGINT", "nullable": false, "description": "FK -> patient (subscriber)."},
+        {"name": "DateEffective", "type": "DATE", "nullable": true, "description": "Coverage start."},
+        {"name": "DateTerm", "type": "DATE", "nullable": true, "description": "Coverage end."},
+        {"name": "BenefitNotes", "type": "TEXT", "nullable": true, "description": "Free-text notes."}
+      ],
+      "primary_key": ["InsSubNum"],
+      "foreign_keys": [
+        {"column": "PlanNum", "referenced_table": "insplan", "referenced_column": "PlanNum"},
+        {"column": "Subscriber", "referenced_table": "patient", "referenced_column": "PatNum"}
+      ],
+      "indexes": []
+    },
+    "insverify": {
+      "name": "insverify",
+      "description": "Pre-appointment insurance verification log. Drives pre_verified column in Extension B.",
+      "columns": [
+        {"name": "InsVerifyNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "DateLastVerified", "type": "DATE", "nullable": true, "description": "Last successful verification date."},
+        {"name": "FKey", "type": "BIGINT", "nullable": false, "description": "Generic foreign key (depends on VerifyType)."},
+        {"name": "VerifyType", "type": "TINYINT", "nullable": false, "description": "0=PatientEnrollment,1=InsuranceBenefit. Filter to 0 for per-patient."},
+        {"name": "DefNum", "type": "BIGINT", "nullable": true, "description": "FK -> definition (verification status)."},
+        {"name": "Note", "type": "TEXT", "nullable": true, "description": "Verifier note."},
+        {"name": "DateLastAssigned", "type": "DATE", "nullable": true, "description": "When last assigned to staff."}
+      ],
+      "primary_key": ["InsVerifyNum"],
+      "foreign_keys": [],
+      "indexes": []
+    },
+    "payment": {
+      "name": "payment",
+      "description": "Patient payments (cash, check, card). Insurance payments live in claimpayment, not here.",
+      "columns": [
+        {"name": "PayNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "PayType", "type": "BIGINT", "nullable": true, "description": "FK -> definition (payment method)."},
+        {"name": "PayDate", "type": "DATE", "nullable": false, "description": "Date received."},
+        {"name": "PayAmt", "type": "DOUBLE", "nullable": false, "description": "Payment amount."},
+        {"name": "PayNote", "type": "TEXT", "nullable": true, "description": "Free-text note."},
+        {"name": "IsRecurringCC", "type": "TINYINT", "nullable": false, "description": "1 = recurring credit card payment."},
+        {"name": "CheckNum", "type": "VARCHAR(25)", "nullable": true, "description": "Check or reference number."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient (the patient making the payment; the splits may attribute to other patients in family billing)."}
+      ],
+      "primary_key": ["PayNum"],
+      "foreign_keys": [
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"}
+      ],
+      "indexes": ["idx_payment_paydate"]
+    },
+    "paysplit": {
+      "name": "paysplit",
+      "description": "Allocates a payment across patients/procedures. The 'amount' for canonical payments comes from here, not payment.PayAmt.",
+      "columns": [
+        {"name": "SplitNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "PayNum", "type": "BIGINT", "nullable": false, "description": "FK -> payment."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient (split may go to family member)."},
+        {"name": "ProcNum", "type": "BIGINT", "nullable": true, "description": "FK -> procedurelog (NULL for unallocated)."},
+        {"name": "ProvNum", "type": "BIGINT", "nullable": true, "description": "FK -> provider (split's provider)."},
+        {"name": "DatePay", "type": "DATE", "nullable": false, "description": "Date the split applies to."},
+        {"name": "SplitAmt", "type": "DOUBLE", "nullable": false, "description": "Amount of this split."}
+      ],
+      "primary_key": ["SplitNum"],
+      "foreign_keys": [
+        {"column": "PayNum", "referenced_table": "payment", "referenced_column": "PayNum"},
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"},
+        {"column": "ProcNum", "referenced_table": "procedurelog", "referenced_column": "ProcNum"}
+      ],
+      "indexes": ["idx_paysplit_paynum", "idx_paysplit_patnum"]
+    },
+    "adjustment": {
+      "name": "adjustment",
+      "description": "Account adjustments and write-offs. UNION ALL with payments to get full Extension D coverage.",
+      "columns": [
+        {"name": "AdjNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "AdjDate", "type": "DATE", "nullable": false, "description": "Date of adjustment."},
+        {"name": "AdjAmt", "type": "DOUBLE", "nullable": false, "description": "Amount (negative = write-off, positive = additional charge)."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient."},
+        {"name": "ProvNum", "type": "BIGINT", "nullable": true, "description": "FK -> provider."},
+        {"name": "AdjType", "type": "BIGINT", "nullable": true, "description": "FK -> definition (adjustment category)."},
+        {"name": "AdjNote", "type": "TEXT", "nullable": true, "description": "Free-text note."},
+        {"name": "ProcNum", "type": "BIGINT", "nullable": true, "description": "FK -> procedurelog."}
+      ],
+      "primary_key": ["AdjNum"],
+      "foreign_keys": [
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"},
+        {"column": "ProcNum", "referenced_table": "procedurelog", "referenced_column": "ProcNum"}
+      ],
+      "indexes": []
+    },
+    "recall": {
+      "name": "recall",
+      "description": "Patient recall scheduling — drives Extension F's recall_due_date.",
+      "columns": [
+        {"name": "RecallNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "PatNum", "type": "BIGINT", "nullable": false, "description": "FK -> patient."},
+        {"name": "DateDue", "type": "DATE", "nullable": true, "description": "When the recall is due."},
+        {"name": "DatePrevious", "type": "DATE", "nullable": true, "description": "Previous recall date."},
+        {"name": "RecallInterval", "type": "INT", "nullable": false, "description": "Months until next recall."},
+        {"name": "RecallStatus", "type": "BIGINT", "nullable": true, "description": "FK -> definition (status)."},
+        {"name": "RecallTypeNum", "type": "BIGINT", "nullable": false, "description": "FK -> recalltype (e.g. 'prophy', 'perio'). Practices have multiple recalls per patient."},
+        {"name": "IsDisabled", "type": "TINYINT", "nullable": false, "description": "Soft-delete flag."}
+      ],
+      "primary_key": ["RecallNum"],
+      "foreign_keys": [
+        {"column": "PatNum", "referenced_table": "patient", "referenced_column": "PatNum"}
+      ],
+      "indexes": ["idx_recall_patnum", "idx_recall_datedue"]
+    },
+    "definition": {
+      "name": "definition",
+      "description": "Generic vocabulary table. Categories include payment types, adjustment types, referral sources, specialties, etc. Patient.ReferredBy may FK here when the practice uses structured referral sources.",
+      "columns": [
+        {"name": "DefNum", "type": "BIGINT", "nullable": false, "description": "Primary key."},
+        {"name": "Category", "type": "TINYINT", "nullable": false, "description": "Category of the definition (referral source, payment method, etc.)."},
+        {"name": "ItemOrder", "type": "INT", "nullable": false, "description": "Display order."},
+        {"name": "ItemName", "type": "VARCHAR(255)", "nullable": false, "description": "Display label."},
+        {"name": "ItemValue", "type": "VARCHAR(255)", "nullable": true, "description": "Optional secondary value."},
+        {"name": "IsHidden", "type": "TINYINT", "nullable": false, "description": "Soft-delete."}
+      ],
+      "primary_key": ["DefNum"],
+      "foreign_keys": [],
+      "indexes": ["idx_definition_category"]
+    }
+  }
+}

@@ -1,0 +1,417 @@
+{
+  "raw_text": "{\n  \"mappings\": [\n    {\n      \"canonical_schema\": \"treatment_plans_raw\",\n      \"column_mappings\": {\n        \"source_id\": {\n          \"canonical_column\": \"source_id\",\n          \"source_expression\": \"treatplan.TreatPlanNum\",\n          \"confidence\": 1.0,\n          \"needs_review\": false,\n          \"notes\": \"Direct PK.\"\n        }\n      },\n      \"join_graph\": [],\n      \"transformations\": {},\n      \"confidence\": 1.0,\n      \"notes\": []\n    }\n  ]\n}",
+  "parsed": {
+    "mappings": [
+      {
+        "canonical_schema": "treatment_plans_raw",
+        "column_mappings": {
+          "source_id": {
+            "canonical_column": "source_id",
+            "source_expression": "treatplan.TreatPlanNum",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Direct PK on the treatment plan table."
+          },
+          "patient_source_id": {
+            "canonical_column": "patient_source_id",
+            "source_expression": "treatplan.PatNum",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Direct FK -> patient.PatNum."
+          },
+          "provider_id": {
+            "canonical_column": "provider_id",
+            "source_expression": "proctp.ProvNum",
+            "confidence": 0.6,
+            "needs_review": true,
+            "notes": "Open Dental's treatplan table has no direct ProvNum; falls back to the planning provider on the constituent procedures (proctp.ProvNum). When a plan has procedures by multiple providers, this picks one — operator should confirm selection rule."
+          },
+          "presented_date": {
+            "canonical_column": "presented_date",
+            "source_expression": "treatplan.DateTP",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "DateTP is the canonical 'date plan was presented' field."
+          },
+          "accepted_date": {
+            "canonical_column": "accepted_date",
+            "source_expression": "treatplan.DateTSigned",
+            "confidence": 0.7,
+            "needs_review": true,
+            "notes": "Open Dental records patient signature time as DateTSigned. Practices that don't use electronic signatures will have NULLs here even for accepted plans — flag for operator review."
+          },
+          "declined_date": {
+            "canonical_column": "declined_date",
+            "source_expression": "NULL",
+            "confidence": 0.0,
+            "needs_review": true,
+            "notes": "Open Dental has no explicit 'declined' date column. Practices typically infer decline from 'plan not signed within X days'. Recommend post-extraction derivation rather than mapping."
+          },
+          "expired_date": {
+            "canonical_column": "expired_date",
+            "source_expression": "NULL",
+            "confidence": 0.0,
+            "needs_review": true,
+            "notes": "Open Dental does not auto-expire treatment plans; no source column exists."
+          },
+          "status": {
+            "canonical_column": "status",
+            "source_expression": "CASE WHEN treatplan.DateTSigned IS NOT NULL THEN 'accepted' WHEN treatplan.TPStatus = 1 THEN 'expired' ELSE 'presented' END",
+            "confidence": 0.6,
+            "needs_review": true,
+            "notes": "Status is derived. 'accepted' inferred from signature; 'declined' and 'partial' cannot be reliably distinguished from 'presented' without additional logic. Operator should confirm or extend."
+          },
+          "plan_dollars": {
+            "canonical_column": "plan_dollars",
+            "source_expression": "(SELECT SUM(proctp.FeeAmt) FROM proctp WHERE proctp.TreatPlanNum = treatplan.TreatPlanNum)",
+            "confidence": 0.9,
+            "needs_review": false,
+            "notes": "Sum of constituent procedure fees on the plan. Excludes tax (typically 0 in dental)."
+          },
+          "procedure_category": {
+            "canonical_column": "procedure_category",
+            "source_expression": "NULL",
+            "confidence": 0.3,
+            "needs_review": true,
+            "notes": "Open Dental stores ADA D-codes on proctp.ProcCode but no canonical category. The de-id tool's existing procedure_category mapping (per the v0.1 contract) would need to be applied at a higher level. Mark NULL for now and let downstream classify."
+          }
+        },
+        "join_graph": [
+          {
+            "left_table": "treatplan",
+            "left_column": "TreatPlanNum",
+            "right_table": "proctp",
+            "right_column": "TreatPlanNum",
+            "join_type": "LEFT"
+          }
+        ],
+        "transformations": {
+          "status": "CASE WHEN treatplan.DateTSigned IS NOT NULL THEN 'accepted' WHEN treatplan.TPStatus = 1 THEN 'expired' ELSE 'presented' END"
+        },
+        "confidence": 0.0,
+        "notes": [
+          "Open Dental treatment plans don't expose a clean lifecycle — accepted/declined/expired must be derived from a combination of DateTSigned, TPStatus, and time-since-presentation. Recommend a follow-up review with the practice on their workflow conventions before relying on the status field."
+        ]
+      },
+      {
+        "canonical_schema": "claims_raw",
+        "column_mappings": {
+          "source_id": {
+            "canonical_column": "source_id",
+            "source_expression": "claim.ClaimNum",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Direct PK."
+          },
+          "patient_source_id": {
+            "canonical_column": "patient_source_id",
+            "source_expression": "claim.PatNum",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Direct FK -> patient.PatNum."
+          },
+          "payer_category": {
+            "canonical_column": "payer_category",
+            "source_expression": "carrier.CarrierName",
+            "confidence": 0.4,
+            "needs_review": true,
+            "notes": "Open Dental stores carrier name as free text. Mapping carrier name to canonical payer_category enum requires a per-practice lookup table or transformation rules. Operator must supply the carrier-name -> category mapping."
+          },
+          "submission_date": {
+            "canonical_column": "submission_date",
+            "source_expression": "claim.DateSent",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "DateSent = clearinghouse submission date."
+          },
+          "payment_date": {
+            "canonical_column": "payment_date",
+            "source_expression": "(SELECT MAX(claimproc.DateCP) FROM claimproc WHERE claimproc.ClaimNum = claim.ClaimNum AND claimproc.Status = 2)",
+            "confidence": 0.8,
+            "needs_review": false,
+            "notes": "Latest claimproc payment date for status=Received (2). NULL if no procs paid."
+          },
+          "denial_date": {
+            "canonical_column": "denial_date",
+            "source_expression": "NULL",
+            "confidence": 0.2,
+            "needs_review": true,
+            "notes": "Open Dental does not flag claims as 'denied' explicitly. Denials show up as ResponseStatus in clearinghouseslog. Practices vary in how they record outright denials vs. partial pays."
+          },
+          "authorization_required": {
+            "canonical_column": "authorization_required",
+            "source_expression": "(claim.PreAuthString IS NOT NULL AND claim.PreAuthString <> '')",
+            "confidence": 0.7,
+            "needs_review": true,
+            "notes": "Inferred from presence of pre-auth string. Practices that don't track pre-auth in this field will return false even when auth was used."
+          },
+          "authorization_date": {
+            "canonical_column": "authorization_date",
+            "source_expression": "NULL",
+            "confidence": 0.0,
+            "needs_review": true,
+            "notes": "No explicit auth-date column in Open Dental claim table."
+          },
+          "denial_reason_category": {
+            "canonical_column": "denial_reason_category",
+            "source_expression": "NULL",
+            "confidence": 0.3,
+            "needs_review": true,
+            "notes": "Denial reasons live as free text in clearinghouseslog.ResponseDetail. Mapping to canonical category requires NLP or a curated lookup."
+          },
+          "status": {
+            "canonical_column": "status",
+            "source_expression": "CASE WHEN claim.ClaimStatus = 'R' THEN 'paid' WHEN claim.ClaimStatus IN ('U','W') THEN 'pending' WHEN claim.ClaimStatus = 'S' THEN 'submitted' ELSE 'pending' END",
+            "confidence": 0.6,
+            "needs_review": true,
+            "notes": "ClaimStatus is a 1-char code. 'R' (Received) and 'S' (Secondary received) both indicate processed but Open Dental doesn't differentiate paid-in-full from partial in this field; flag for review."
+          },
+          "pre_verified": {
+            "canonical_column": "pre_verified",
+            "source_expression": "EXISTS (SELECT 1 FROM insverify WHERE insverify.FKey = claim.PatNum AND insverify.VerifyType = 0 AND insverify.DateLastVerified >= DATE_SUB(claim.DateService, INTERVAL 90 DAY))",
+            "confidence": 0.5,
+            "needs_review": true,
+            "notes": "Pre-verification heuristic: any insverify row for the patient within 90 days before service. The 90-day window is a guess; practices' verification refresh intervals vary."
+          }
+        },
+        "join_graph": [
+          {
+            "left_table": "claim",
+            "left_column": "PlanNum",
+            "right_table": "insplan",
+            "right_column": "PlanNum",
+            "join_type": "LEFT"
+          },
+          {
+            "left_table": "insplan",
+            "left_column": "CarrierNum",
+            "right_table": "carrier",
+            "right_column": "CarrierNum",
+            "join_type": "LEFT"
+          }
+        ],
+        "transformations": {
+          "status": "CASE WHEN claim.ClaimStatus = 'R' THEN 'paid' WHEN claim.ClaimStatus IN ('U','W') THEN 'pending' WHEN claim.ClaimStatus = 'S' THEN 'submitted' ELSE 'pending' END",
+          "payer_category": "/* practice-specific carrier-name -> canonical-payer-category lookup table required */"
+        },
+        "confidence": 0.0,
+        "notes": [
+          "Carrier-name to payer-category requires a practice-specific lookup. Many practices have only a few carriers; suggest the wizard prompt the operator for a mapping table.",
+          "Pre-verification window is a guess; should be a configurable parameter."
+        ]
+      },
+      {
+        "canonical_schema": "schedule_capacity_raw",
+        "column_mappings": {
+          "practice_period": {
+            "canonical_column": "practice_period",
+            "source_expression": "DATE_FORMAT(schedule.SchedDate, '%Y-%m')",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Truncate to month."
+          },
+          "provider_id": {
+            "canonical_column": "provider_id",
+            "source_expression": "schedule.ProvNum",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "For provider-grain rows, ProvNum is direct."
+          },
+          "chair_id": {
+            "canonical_column": "chair_id",
+            "source_expression": "scheduleop.OperatoryNum",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "For chair-grain rows, join schedule -> scheduleop -> operatory and group by OperatoryNum. The mapping should produce a UNION ALL of provider-grain and chair-grain rows."
+          },
+          "scheduled_hours": {
+            "canonical_column": "scheduled_hours",
+            "source_expression": "SUM(TIMESTAMPDIFF(MINUTE, schedule.StartTime, schedule.StopTime)) / 60.0",
+            "confidence": 0.9,
+            "needs_review": false,
+            "notes": "Sum block durations in hours."
+          },
+          "productive_hours": {
+            "canonical_column": "productive_hours",
+            "source_expression": "(SELECT SUM(appointment.AptLength) / 60.0 FROM appointment WHERE appointment.ProvNum = schedule.ProvNum AND DATE(appointment.AptDateTime) = schedule.SchedDate AND appointment.AptStatus = 2)",
+            "confidence": 0.7,
+            "needs_review": true,
+            "notes": "Sum AptLength for completed (AptStatus=2) appointments matching the row's grain. Note: AptLength is in minutes in modern Open Dental but legacy installs use 5-minute increments — verify with practice."
+          }
+        },
+        "join_graph": [
+          {
+            "left_table": "schedule",
+            "left_column": "ScheduleNum",
+            "right_table": "scheduleop",
+            "right_column": "ScheduleNum",
+            "join_type": "LEFT"
+          }
+        ],
+        "transformations": {},
+        "confidence": 0.0,
+        "notes": [
+          "Output is a UNION ALL of provider-grain (via schedule.ProvNum) and chair-grain (via scheduleop.OperatoryNum) rows."
+        ]
+      },
+      {
+        "canonical_schema": "payments_raw",
+        "column_mappings": {
+          "source_id": {
+            "canonical_column": "source_id",
+            "source_expression": "paysplit.SplitNum",
+            "confidence": 0.9,
+            "needs_review": false,
+            "notes": "Each payment may have multiple splits; the canonical row is at split-grain."
+          },
+          "patient_source_id": {
+            "canonical_column": "patient_source_id",
+            "source_expression": "paysplit.PatNum",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Direct."
+          },
+          "payment_date": {
+            "canonical_column": "payment_date",
+            "source_expression": "paysplit.DatePay",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Per-split date."
+          },
+          "amount": {
+            "canonical_column": "amount",
+            "source_expression": "paysplit.SplitAmt",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Per-split amount."
+          },
+          "payment_source": {
+            "canonical_column": "payment_source",
+            "source_expression": "'patient'",
+            "confidence": 0.5,
+            "needs_review": true,
+            "notes": "Need UNION ALL with claimpayment (insurance) and adjustment (writeoff) tables. This mapping covers patient payments only. Operator should review the full UNION expression."
+          },
+          "payer_category": {
+            "canonical_column": "payer_category",
+            "source_expression": "'self_pay'",
+            "confidence": 0.5,
+            "needs_review": true,
+            "notes": "Patient-paid splits are 'self_pay' by definition. Insurance splits would map differently (via UNION'd claimpayment branch)."
+          }
+        },
+        "join_graph": [
+          {
+            "left_table": "paysplit",
+            "left_column": "PayNum",
+            "right_table": "payment",
+            "right_column": "PayNum",
+            "join_type": "INNER"
+          }
+        ],
+        "transformations": {},
+        "confidence": 0.0,
+        "notes": [
+          "Full Extension D coverage requires UNION ALL of paysplit (patient), claimpayment (insurance), and adjustment (writeoff). The mapping above only covers the patient branch."
+        ]
+      },
+      {
+        "canonical_schema": "timekeeping_raw",
+        "column_mappings": {
+          "practice_period": {
+            "canonical_column": "practice_period",
+            "source_expression": "DATE_FORMAT(schedule.SchedDate, '%Y-%m')",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Truncate to month."
+          },
+          "provider_id": {
+            "canonical_column": "provider_id",
+            "source_expression": "schedule.ProvNum",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Direct."
+          },
+          "staff_role": {
+            "canonical_column": "staff_role",
+            "source_expression": "NULL",
+            "confidence": 0.0,
+            "needs_review": true,
+            "notes": "Open Dental does not store non-provider staff roles in the PMS. Staff timekeeping typically lives in payroll software (Gusto, ADP, etc.); recommend an integration there for role-grain rows."
+          },
+          "scheduled_hours": {
+            "canonical_column": "scheduled_hours",
+            "source_expression": "SUM(TIMESTAMPDIFF(MINUTE, schedule.StartTime, schedule.StopTime)) / 60.0",
+            "confidence": 0.9,
+            "needs_review": false,
+            "notes": "Hours scheduled. Same source as Extension C but different grain."
+          },
+          "productive_hours": {
+            "canonical_column": "productive_hours",
+            "source_expression": "(SELECT SUM(appointment.AptLength) / 60.0 FROM appointment WHERE appointment.ProvNum = schedule.ProvNum AND DATE(appointment.AptDateTime) = schedule.SchedDate AND appointment.AptStatus = 2)",
+            "confidence": 0.7,
+            "needs_review": true,
+            "notes": "Same as Extension C productive_hours. AptLength units may need verification per install."
+          },
+          "hourly_rate": {
+            "canonical_column": "hourly_rate",
+            "source_expression": "provider.HourlyRate",
+            "confidence": 0.6,
+            "needs_review": true,
+            "notes": "provider.HourlyRate is populated only when practices use Open Dental's payroll module — many do not. Operator should verify before relying on this column."
+          }
+        },
+        "join_graph": [
+          {
+            "left_table": "schedule",
+            "left_column": "ProvNum",
+            "right_table": "provider",
+            "right_column": "ProvNum",
+            "join_type": "LEFT"
+          }
+        ],
+        "transformations": {},
+        "confidence": 0.0,
+        "notes": [
+          "Provider-grain only; staff-role grain unmappable from PMS alone."
+        ]
+      },
+      {
+        "canonical_schema": "patients_raw_extension",
+        "column_mappings": {
+          "last_visit_date": {
+            "canonical_column": "last_visit_date",
+            "source_expression": "patient.DateLastVisit",
+            "confidence": 1.0,
+            "needs_review": false,
+            "notes": "Direct field."
+          },
+          "recall_due_date": {
+            "canonical_column": "recall_due_date",
+            "source_expression": "(SELECT MIN(recall.DateDue) FROM recall WHERE recall.PatNum = patient.PatNum AND recall.IsDisabled = 0 AND recall.DateDue >= CURDATE())",
+            "confidence": 0.8,
+            "needs_review": false,
+            "notes": "Soonest open recall for the patient. Practices may have multiple recall types per patient (prophy, perio, etc.); we pick the soonest."
+          },
+          "referral_source_category": {
+            "canonical_column": "referral_source_category",
+            "source_expression": "patient.ReferredBy",
+            "confidence": 0.3,
+            "needs_review": true,
+            "notes": "patient.ReferredBy is free-text in many installs and a FK to definition (category=referral source) in others. Mapping the source value to the canonical category vocab requires a per-practice lookup. Operator must supply the mapping or set this to NULL."
+          }
+        },
+        "join_graph": [],
+        "transformations": {
+          "referral_source_category": "/* practice-specific referral-source-text -> canonical-category lookup required */"
+        },
+        "confidence": 0.0,
+        "notes": [
+          "Extension F adds columns to existing patients_raw rows; treat the mapping as a JOIN-on-patient_source_id rather than a new file."
+        ]
+      }
+    ]
+  },
+  "input_tokens": 7800,
+  "output_tokens": 3400
+}
