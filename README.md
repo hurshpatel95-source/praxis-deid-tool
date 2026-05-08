@@ -226,6 +226,36 @@ Cost: a single wizard run for one PMS uses roughly 8-12K input tokens
 and 3-5K output tokens — well under $0.10 at current `claude-sonnet-4-5`
 pricing.
 
+### Validation gate (Open Dental ground truth)
+
+The wizard's correctness is gated against an expert-audited Open Dental
+ground-truth mapping before its output is trusted by the rest of the
+de-id pipeline.
+
+```bash
+# Rebuild ground truth (only when corrections are added)
+python3 scripts/build_ground_truth.py
+
+# Run gate offline (uses recorded fixture; free, no network)
+python3 scripts/validate_wizard.py --replay
+
+# Run gate against live Anthropic API (~$0.07 per run)
+python3 scripts/validate_wizard.py --live
+```
+
+The gate scores wizard output against `tests/fixtures/expected_mapping_open_dental.json`
+on four axes:
+
+| Axis | Threshold | Meaning |
+|---|---|---|
+| `table_agreement` | ≥95% | Each column references a source table that overlaps with ground truth |
+| `high_confidence_exact_match` | =100% | Columns with ground-truth confidence ≥0.9 must match exactly |
+| `needs_review_agreement` | ≥80% | Wizard's needs_review flag agrees with ground truth |
+| `critical_errors` | =0 | No known wrong patterns (e.g. `claimproc.Status=2` interpreted as Received — it's actually Preauth) |
+
+Exit code 0 = GO; exit code 1 = NO-GO (human review required); exit code
+2 = wizard itself errored.
+
 ## Running the tests
 
 ```bash
