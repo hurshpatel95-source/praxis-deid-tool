@@ -256,6 +256,53 @@ on four axes:
 Exit code 0 = GO; exit code 1 = NO-GO (human review required); exit code
 2 = wizard itself errored.
 
+## Extractors (Phase-C: Extensions A–F)
+
+The `run` command above consumes CSV exports the practice has already produced from their PMS. The `extract` subcommand is the other side of that workflow: it reads **directly from the PMS database** (default: Open Dental MySQL/MariaDB) and emits the six **Phase-C canonical CSVs** that drive the cloud dashboard's Wave 1 + Wave 2 tiles.
+
+```bash
+praxis-deid extract --extension <A|B|C|D|E|F|all>
+                    --connection <db-url>            # OR --fixture-json <path>
+                    --output <dir>
+                    --practice-id <uuid>
+                    --salt-env-var PRAXIS_DEID_SALT
+                    [--mapping-dir mappings/open_dental]
+                    [--since YYYY-MM] [--until YYYY-MM] [--limit N]
+                    [--audit-log <path>]
+```
+
+The six supported extensions:
+
+| Letter | Canonical CSV                  | Source tables (Open Dental)                       |
+|--------|--------------------------------|----------------------------------------------------|
+| A      | `treatment_plans_raw.csv`      | `treatplan` LEFT JOIN `proctp`                     |
+| B      | `claims_raw.csv`               | `claim` LEFT JOIN `insplan` LEFT JOIN `carrier`    |
+| C      | `schedule_capacity_raw.csv`    | `schedule` LEFT JOIN `scheduleop` (UNION ALL of provider-grain + chair-grain) |
+| D      | `payments_raw.csv`             | UNION ALL of `paysplit` + `claimpayment` + `adjustment` |
+| E      | `timekeeping_raw.csv`          | `schedule` LEFT JOIN `provider`                    |
+| F      | `patients_extension.csv`       | `patient` + `recall` (last_visit, recall_due, referral_source) |
+
+**Key safety properties (verified by the test suite):**
+
+- **No raw SQL injection.** Mapping configs supply column expressions; the loader scans every expression for forbidden patterns (`;`, `--`, `/*`, DDL keywords like `DROP`/`TRUNCATE`/`DELETE`) and rejects the config at load time.
+- **Per-record dollars are always banded.** Every amount flows through `safe_harbor.amount_to_band` before the canonical row is built. A regex-based dollar-leak scanner runs over every produced CSV.
+- **Cross-extension HMAC stability.** A single `Deidentifier` instance (== a single salt) is shared across every extractor in a run, so a `patient_source_id` HMACs to the **same** `external_id` in every CSV (verified by `test_cross_extension_hmac_stability`).
+- **Locked v0.1 modules untouched.** `safe_harbor.py`, `deidentify.py`, `hashing.py`, `schema.py`, `audit.py`, `config.py` remain frozen; the extractors compose them through the public API.
+
+**Dry run with synthetic rows (no DB needed):**
+
+```bash
+export PRAXIS_DEID_SALT=$(openssl rand -hex 32)
+praxis-deid extract --extension all \
+                    --fixture-json tests/fixtures/phase_c_fixture.json \
+                    --output /tmp/extract-test/ \
+                    --practice-id "$PRAXIS_PRACTICE_ID"
+```
+
+This produces all six canonical CSVs without ever opening a DB connection — useful for CI, audits, and local development.
+
+The hand-curated mapping configs live in `mappings/open_dental/`. See [`mappings/open_dental/README.md`](mappings/open_dental/README.md) for editing rules.
+
 ## Running the tests
 
 ```bash

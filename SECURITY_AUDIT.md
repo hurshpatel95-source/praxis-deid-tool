@@ -399,3 +399,151 @@ refuses files with row data. Tests cover both walls, both adversarially
 Dental fixture passes).
 
 The wizard adds 73 tests to the suite (143 total). All passing.
+
+---
+
+## Phase-C extractors (Extensions A-F)
+
+Phase-C ships the six per-extension extractors that pull data from a
+practice's PMS database (default: Open Dental MySQL/MariaDB), apply the
+existing locked Safe Harbor pipeline, and emit the canonical CSVs that
+drive Wave 1 + Wave 2 of the cloud dashboard. The HIPAA posture below
+is verified by the test suite (`tests/test_extractor_*.py`, 188 new
+assertions on top of the 143-test wizard baseline = **331 total**, all
+green).
+
+### Threat surface
+
+The extractor process runs **at the practice**, against the practice's
+own PMS database. PHI never leaves the local network. The new attack
+surface vs. v0.1:
+
+1. A maliciously hand-edited mapping config could try to inject SQL
+   into a column expression (e.g. `treatplan.PatNum; DROP TABLE
+   patient`).
+2. A buggy / adversarial mapping could try to surface a raw PHI column
+   (`patient.LName`, `patient.SSN`, etc.) via a `passthrough` handling.
+3. A buggy extractor could emit per-record dollar amounts un-banded.
+4. A misconfigured run could leak the practice salt via the audit log
+   or stderr.
+
+Each is closed below.
+
+### Defense 1: schema-bounded query execution (no raw SQL injection)
+
+The extractor never hands a config-derived SQL fragment to a DBAPI
+cursor's `.execute()` string. The architectural pattern:
+
+* The `RowSource` callable (the only seam to the DB) takes a
+  `(table_name, columns, filter)` tuple and returns already-fetched
+  row dicts. The CLI wires this to a real cursor; tests wire it to a
+  list of synthetic dicts.
+* Column expressions in the mapping config are resolved against the
+  fetched row dict via a deterministic Python evaluator
+  (`resolve_simple_reference` for `table.column` references, plus
+  per-extractor logic for CASE / sub-aggregate columns the audited
+  mapping documents).
+* Belt-and-braces: `praxis_deid/extractors/base.py::load_mapping_config`
+  scans every `source_expression` for forbidden substrings (`;`, `--`,
+  `/*`, `*/`) and forbidden DDL keywords
+  (`DROP`/`TRUNCATE`/`DELETE`/`UPDATE`/`INSERT`/`ALTER`/...). Hits
+  raise `ExtractorError` at load time, before any DB activity.
+
+Tests:
+`tests/test_extractor_base.py::test_load_mapping_rejects_semicolon_injection`
+and 6 sibling tests cover keyword + comment-marker variants. The
+defense is the loader, not the runtime — a hand-edited `mappings/`
+file that contains `DROP TABLE` is rejected with a clear error
+identifying the offending column, not silently ignored.
+
+### Defense 2: required-column gate + canonical-only output
+
+Every required canonical column must have a mapping entry, even if its
+`source_expression` is `NULL` (signalling unmappable). A required
+column with no mapping at all is an `ExtractorError`. Conversely, a
+mapping entry for a column that does NOT exist in
+`praxis_deid/wizard/canonical_schemas.py` is an `ExtractorError` —
+this stops a tampered config from sneaking a `patient.SSN` column into
+the output by claiming it's a canonical field.
+
+The output dataclasses (`praxis_deid/extractors/rows.py`) define the
+exhaustive list of fields that can appear in any extension's CSV.
+Every dataclass has a `validate()` method that asserts enum
+membership, month-format regex, and banded-dollar membership. PHI
+fields like `first_name`, `dob`, `ssn`, etc. are not in any
+dataclass — they cannot appear in output by construction.
+
+### Defense 3: every output value passes through safe_harbor.py
+
+The base class's `apply_hipaa_handling` dispatcher routes every cell
+through the locked `safe_harbor` / `hashing` modules per the canonical
+column's `hipaa_handling`:
+
+* `hmac` -> `hashing.stable_external_id` (HMAC-SHA256 with practice salt)
+* `month` -> `safe_harbor.date_to_month` (YYYY-MM truncation)
+* `band` -> `safe_harbor.amount_to_band` (REVENUE_BANDS)
+* `category` -> per-extractor controlled-vocab mapping
+* `passthrough` -> raw value (only for non-PHI columns like provider_id)
+
+Per-extension exceptions (banded by Phase-C even though Safe Harbor
+doesn't strictly require it):
+
+* **Extension E**: `provider.HourlyRate` is banded into
+  `$0-50`/`$50-100`/`$100-150`/`$150-200`/`$200+` because for tiny
+  practices a single $187/hr rate could re-identify the only provider
+  in that band. `tests/test_extractor_e_timekeeping.py::test_hourly_rate_band_not_exact_dollar`
+  verifies the exact rate doesn't appear in any row's repr.
+
+### Defense 4: dollar-leak scanner over every output CSV
+
+`praxis_deid/extractors/base.py::assert_no_exact_dollars_in_csv`
+walks every cell of a written CSV and raises `ExtractorError` if any
+cell that looks like a numeric value larger than 1000 has slipped
+through (i.e. an unbanded amount).
+
+This is the belt-and-braces enforcement of the BAA invariant
+"per-record amounts are banded; only sums-across-many-records are
+exact" (`praxis-app/BAA_INVARIANTS.md` §I.5). The CLI runs this scan
+after writing each CSV and aborts with exit code 4 if it trips.
+Tests:
+`tests/test_extractor_d_payments.py::test_csv_dump_passes_dollar_leak_scan`
+and `tests/test_extractor_cli_e2e.py::test_extract_no_unbanded_dollars_in_any_output`.
+
+### Defense 5: cross-extension HMAC stability without leaking the salt
+
+A single `Deidentifier` instance (== a single salt) is constructed
+once at the start of the run and shared across every per-extension
+extractor. Patient HMAC stability is verified at the CLI level by
+`tests/test_extractor_cli_e2e.py::test_cross_extension_hmac_stability`
+which extracts the same `patient_source_id` ("PT-1") through all six
+extractors and asserts the resulting `patient_external_id` matches
+across every produced CSV.
+
+The salt itself never enters the audit log, never appears in stderr,
+and is loaded from an env var (default name `PRAXIS_DEID_SALT`) — the
+CLI rejects salts shorter than 32 chars (matches v0.1 config policy).
+
+### What the audit log captures (Phase-C extract command)
+
+For every `praxis-deid extract` run, an audit envelope is appended to
+the configured log. Per-extension entries record:
+
+* `tool_version`, `practice_id`, `run_id`, `command="extract"`
+* `extensions: [...]`, `output_dir`, `filter` (since/until/limit)
+* `per_extension`: rows out, rows dropped, drop reasons by category
+* **NEVER**: salt, raw row content, source identifiers, carrier names
+
+Carrier names are not PHI but are sensitive practice metadata; the
+extractor accumulates `unmapped_carriers` in memory for operator
+curation and does NOT log them.
+
+### Verdict (Phase-C)
+
+**Phase-C does not weaken the v0.1 HIPAA posture.** It adds five
+defenses on top of the locked Safe Harbor pipeline: schema-bounded
+query execution, canonical-only output, dispatcher routing through
+locked safe_harbor primitives, dollar-leak CSV scanner, and
+cross-extension HMAC stability via a single shared `Deidentifier`.
+
+The Phase-C extractors add 188 tests to the suite (331 total). All
+passing.
