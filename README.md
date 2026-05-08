@@ -7,7 +7,7 @@
 >
 > - 5 critical findings from the internal security audit are already fixed (see commit [`52f2afc`](https://github.com/hurshpatel95-source/praxis-deid-tool/commit/52f2afc) and [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md)).
 > - HIPAA consultant validation is scheduled before first customer deployment.
-> - 63/63 pytest assertions pass on every commit; no known active leakage paths.
+> - 143/143 pytest assertions pass on every commit (70 v0.1 core + 73 wizard); no known active leakage paths.
 > - **MIT-licensed — use at your own risk.** If you deploy this against real PHI before the audit clears, you own the compliance posture.
 >
 > Issues + PRs welcome. For the privacy architecture this tool is part of, see [praxishealth.ai/security](https://praxis-app-production.up.railway.app/security).
@@ -143,6 +143,88 @@ Every run appends a single JSON line to `audit.log_path`:
 ```
 
 The salt is **never** logged.
+
+## Wizard: setup for new PMS connections
+
+Hand-coding a CSV adapter for every dental PMS doesn't scale. The
+`praxis-deid wizard` subcommand uses the Anthropic API to propose
+mappings from any source PMS schema to Praxis's canonical CSVs, then
+runs the proposal through structural validation and a human-in-the-loop
+approval flow before writing the practice's `mapping.json`.
+
+**The bright HIPAA line:** the wizard reads SCHEMA METADATA ONLY — table
+names, column names, types, foreign keys. It NEVER reads or transmits
+row data. Two walls protect the API call:
+
+1. The schema reader is built so it cannot return row data — JSON dumps
+   are metadata-only by construction; SQL DDL parsers refuse files
+   containing `INSERT`, `COPY`, or `LOAD DATA`; live SQLAlchemy
+   reflection issues only `MetaData.reflect()` (information_schema), no
+   `SELECT` against user tables.
+2. **`PhiGuard`** inspects every payload immediately before it leaves
+   the process. If the payload contains anything PHI-shaped (SSN,
+   email, full date, phone, MRN, ZIP+4, or a forbidden field name like
+   `rows`/`samples`/`data`), `PhiGuard` raises `PhiDetectedError` and
+   the request is aborted. Defense in depth — both walls have to fail
+   for PHI to leak.
+
+The wizard maps to **6 canonical CSVs** that the de-id pipeline produces
+post-mapping (Extensions A-F per `praxis-app/METRIC_COVERAGE_AUDIT.md`
+§4.1):
+
+| Extension | Canonical CSV | Unlocks |
+|---|---|---|
+| A | `treatment_plans_raw.csv` | 5 of 6 metrics in the Treatment Plan section |
+| B | `claims_raw.csv` | 6 metrics across Insurance + Compliance |
+| C | `schedule_capacity_raw.csv` | Production per chair, utilization, fill rate |
+| D | `payments_raw.csv` | Collections rate, insurance vs OOP mix |
+| E | `timekeeping_raw.csv` | Provider compensation %, per-hour productivity |
+| F | `patients_raw.csv` columns | Recall + referral source extensions |
+
+### Run it
+
+```bash
+# Install the wizard extra
+pip install praxis-deid[wizard]
+
+# Make sure your Anthropic API key is set
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Run against a JSON schema dump (preferred — review the dump offline first)
+praxis-deid wizard run \
+  --schema-file path/to/your_pms_schema.json \
+  --pms open_dental \
+  --output ~/.praxis-deid/mappings/open_dental.json
+
+# Or against a DDL-only SQL dump (rejected if it contains INSERT/COPY)
+praxis-deid wizard run \
+  --sql-dump path/to/schema_only.sql \
+  --pms dentrix \
+  --output ~/.praxis-deid/mappings/dentrix.json
+
+# See what canonical schemas the wizard knows about
+praxis-deid wizard list-schemas
+```
+
+The flow:
+
+1. Read the source PMS schema (metadata only).
+2. Send schema metadata to Claude (after `PhiGuard` clears the payload).
+3. Claude returns a `MappingConfig` per canonical schema, with per-column
+   confidence scores. Columns it can't map confidently get
+   `needs_review: true` and `confidence: 0.0` rather than a guess.
+4. The validator runs structural checks: every required canonical
+   column has a mapping, every source-table reference points at a
+   table that exists in the source PMS, enum columns have transformations.
+5. The CLI prompts the operator column-by-column to accept Claude's
+   mapping, override it, or skip. The operator's edits get the final
+   say — Claude's output is a starting point, not a decision.
+6. The approved `mapping.json` is written to disk for the de-id
+   pipeline to consume.
+
+Cost: a single wizard run for one PMS uses roughly 8-12K input tokens
+and 3-5K output tokens — well under $0.10 at current `claude-sonnet-4-5`
+pricing.
 
 ## Running the tests
 

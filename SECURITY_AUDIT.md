@@ -249,3 +249,153 @@ Everything else on the public page is honest. The architecture is what they say 
 The de-identification logic is solid, the cryptography is correct, the schema conformance with the cloud is exact, and the test count on the public page is honest. The five must-fix items are bugs of omission, not architectural failures — the tool has the right shape, it just lets a few quiet data-quality issues through that an attentive HIPAA consultant will absolutely notice. None of them are show-stoppers. All five are <50 lines of code each.
 
 The biggest credibility lift before public GitHub: add a `hypothesis` property-based PHI fuzz test. It's the single most differentiating thing a small open-source de-id tool can ship, and the dev dependency is already declared.
+
+---
+
+## Addendum (2026-05-07): Wizard-1 — schema-mapping setup
+
+The de-id tool gained a new module — `praxis_deid/wizard/` — that uses
+the Anthropic API to propose mappings from a source PMS schema to the 6
+canonical CSVs the de-id pipeline produces. This addendum documents the
+HIPAA posture of the wizard, since it adds the tool's first
+external-network-call code path.
+
+### The bright line
+
+The wizard reads SCHEMA METADATA ONLY. Table names, column names,
+column types, foreign-key relationships, indexes, primary keys, optional
+column descriptions. It NEVER reads or transmits row data — not one
+row, not one cell, not one preview. That is the wizard's whole
+legitimacy as a HIPAA-relevant tool: the Anthropic API call is
+schema-only, full stop.
+
+The de-id tool's existing posture (the v0.1 core) does not change. The
+wizard is bolted on, off to the side; the existing modules
+(`deidentify.py`, `safe_harbor.py`, `hashing.py`, `schema.py`,
+`config.py`) are not modified by Wizard-1 at all. Cloud Praxis still
+sees only canonical, de-identified CSVs.
+
+### Two walls of defense
+
+1. **Wall 1 — schema reader cannot return row data.** The reader has
+   three input modes:
+   - **JSON dump** (`praxis_deid/wizard/schema_reader.py:read_pms_schema_from_json`):
+     reads a pre-extracted metadata file. The dataclasses
+     (`PmsSchema`, `TableSchema`, `ColumnSchema`, `ForeignKey`) have NO
+     fields for row data, sample values, or previews. A test
+     (`test_pms_schema_dataclass_has_no_data_field`) asserts those
+     fields don't exist, so a future contributor adding one fails CI.
+   - **SQL DDL dump** (`read_pms_schema_from_sql_dump`): refuses to
+     parse files containing `INSERT INTO`, `COPY ... FROM`, `LOAD DATA`,
+     or `BULK INSERT`. Tested against intentional violations
+     (`test_sql_dump_rejects_insert_statements`,
+     `test_sql_dump_rejects_copy_statements`).
+   - **Live SQLAlchemy reflection** (`read_pms_schema_from_sqlalchemy`):
+     issues only `MetaData.reflect()` (information_schema lookups). No
+     `SELECT` against user data tables, ever.
+
+2. **Wall 2 — `PhiGuard` (`praxis_deid/wizard/claude_mapper.py`).** A
+   pre-send inspector that scans the JSON payload for PHI-shaped content
+   AND for forbidden field names (`rows`, `samples`, `data`,
+   `sample_data`, `preview`, etc. — names that would only appear if the
+   caller bundled row VALUES into the request). Patterns checked:
+   - SSN: `NNN-NN-NNNN`
+   - SSN-solid in labelled context (`ssn 123456789`)
+   - Email addresses
+   - US phone numbers (multiple shapes)
+   - Full ISO date-of-birth (`YYYY-MM-DD`)
+   - ZIP+4 (`NNNNN-NNNN`)
+   - MRN-shaped tokens (`MRN: ABC123456`)
+   - Credit-card-shaped digit runs
+
+   On detection, `PhiGuard` raises `PhiDetectedError` and the request
+   is aborted. The guard does NOT redact and continue — redaction
+   would mask the upstream bug that caused PHI to reach this point.
+   The error message redacts the offending PHI snippet so it doesn't
+   land in logs (`test_phi_guard_error_message_is_truncated`).
+
+### Defense in depth
+
+Both walls have to fail simultaneously for PHI to leak:
+
+- For Wall 1 to fail: someone modifies the schema reader to include row
+  data. Caught by:
+  - The dataclass-shape tests (`test_pms_schema_dataclass_has_no_data_field`).
+  - Code review (the schema reader is ~200 lines, single-purpose).
+
+- For Wall 2 to fail: PHI passes Wall 1 AND PhiGuard's regex set misses
+  it. Caught by:
+  - PhiGuard's intentionally aggressive pattern set — false positives
+    are cheap, false negatives are catastrophic.
+  - The fixture-level test
+    (`test_phi_guard_open_dental_fixture_passes`) — the legitimate
+    Open Dental schema fixture passes the guard, so we know the guard
+    isn't blanket-blocking benign metadata.
+
+### What the Anthropic API call sends
+
+The full prompt payload, structurally:
+
+```json
+{
+  "pms_schema": {
+    "pms_name": "open_dental",
+    "tables": {
+      "patient": {
+        "columns": [
+          {"name": "PatNum", "type": "BIGINT", "nullable": false,
+           "description": "Primary key. Source patient identifier."}
+          // ... no values, no rows, no samples, ever
+        ],
+        "primary_key": ["PatNum"],
+        "foreign_keys": [...],
+        "indexes": [...]
+      }
+    }
+  },
+  "canonical_schemas": [...]  // the 6 target shapes
+}
+```
+
+This payload contains:
+- Table names from the source PMS (e.g. `patient`, `treatplan`, `claim`)
+- Column names (e.g. `PatNum`, `LName`, `Birthdate`)
+- Column types (`BIGINT`, `VARCHAR(100)`, `DATE`)
+- Foreign-key edges
+- The Praxis canonical schema definitions (no PMS data at all)
+
+It does not contain — and Wall 1 makes it impossible to contain — any
+patient names, dates of birth, ZIP codes, MRNs, phone numbers, email
+addresses, sample rows, query results, or anything else that could
+identify a patient.
+
+### Operator review is non-negotiable
+
+The wizard never auto-applies a mapping. Every column has to be
+explicitly approved by the practice operator (`run_human_approval()` in
+`praxis_deid/wizard/human_approval.py`) before the mapping.json is
+written. Claude's output is a starting point; the operator's edits get
+the final say. Low-confidence mappings (`confidence < 0.7`) are flagged
+in red and require explicit acceptance. Validation errors are blocking
+in non-interactive mode.
+
+### Cost / footprint
+
+A single wizard run for one PMS uses roughly 8-12K input tokens and
+3-5K output tokens — under $0.10 per run at current `claude-sonnet-4-5`
+pricing. The wizard is a one-time onboarding step per practice (or
+re-run when the practice's PMS schema materially changes); it is not
+on the hot path for ongoing de-identification, which still runs without
+any external network call.
+
+### Verdict
+
+**The wizard does not weaken the v0.1 HIPAA posture.** It introduces
+one new outbound call to the Anthropic API; that call is gated by two
+independent walls; the dataclasses make row-data leakage structurally
+impossible for the JSON-dump and SQLAlchemy modes; the SQL-dump mode
+refuses files with row data. Tests cover both walls, both adversarially
+(intentional PHI in payloads) and positively (the legitimate Open
+Dental fixture passes).
+
+The wizard adds 73 tests to the suite (143 total). All passing.
