@@ -107,6 +107,15 @@ def add_wizard_subparser(subparsers: argparse._SubParsersAction) -> None:
             "and no validation errors."
         ),
     )
+    run.add_argument(
+        "--interactive",
+        action="store_true",
+        help=(
+            "Force the prompt-based approval flow even when stdin isn't "
+            "a TTY (e.g. when piping `yes a` for scripted approval). "
+            "Mutually exclusive with --non-interactive."
+        ),
+    )
 
     list_schemas = wizard_sub.add_parser(
         "list-schemas",
@@ -204,12 +213,24 @@ def _handle_run(args: argparse.Namespace) -> int:
         issues_by_schema.setdefault(issue.canonical_schema, []).append(issue)
 
     # 4. Human approval (or auto-approve in non-interactive mode).
+    if args.non_interactive and args.interactive:
+        print(
+            "error: --non-interactive and --interactive are mutually exclusive",
+            file=sys.stderr,
+        )
+        return 2
+    if args.non_interactive:
+        interactive: bool | None = False
+    elif args.interactive:
+        interactive = True
+    else:
+        interactive = None  # auto-detect from stdin.isatty()
     result = run_human_approval(
         mappings,
         issues_by_schema=issues_by_schema,
         output_path=args.output,
         pms_name=pms_name,
-        interactive=False if args.non_interactive else None,
+        interactive=interactive,
     )
 
     if result.canceled:
