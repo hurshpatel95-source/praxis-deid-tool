@@ -1,0 +1,74 @@
+{
+  "_meta": {
+    "extension_letter": "D",
+    "canonical_schema": "payments_raw",
+    "pms": "open_dental",
+    "audit_source": "tests/fixtures/anthropic_responses/open_dental_treatment_plans.json",
+    "audited_against": [
+      "https://www.opendental.com/manual/claimprocstatus.html",
+      "https://www.opendental.com/manual/claimstatus.html",
+      "https://www.opendental.com/manual/treatmentplanstatus.html",
+      "https://www.opendental.com/manual/appointmentstatus.html"
+    ],
+    "purpose": "Extension D hand-curated Open Dental mapping. Consumed by praxis_deid/extractors/d_*.py to produce payments_raw.csv at de-id time. Derived from expected_mapping_open_dental.json + expert audit. DO NOT regenerate from the wizard \u2014 the wizard's output is 78% reliable per the Wizard-1 validation gate (commit 6b19ae9). Hand-edits to this file MUST cite the Open Dental manual page they are based on."
+  },
+  "canonical_schema": "payments_raw",
+  "column_mappings": {
+    "source_id": {
+      "canonical_column": "source_id",
+      "source_expression": "paysplit.SplitNum",
+      "confidence": 0.9,
+      "needs_review": false,
+      "notes": "Each payment may have multiple splits; the canonical row is at split-grain."
+    },
+    "patient_source_id": {
+      "canonical_column": "patient_source_id",
+      "source_expression": "paysplit.PatNum",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "Direct."
+    },
+    "payment_date": {
+      "canonical_column": "payment_date",
+      "source_expression": "paysplit.DatePay",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "Per-split date."
+    },
+    "amount": {
+      "canonical_column": "amount",
+      "source_expression": "paysplit.SplitAmt",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "Per-split amount."
+    },
+    "payment_source": {
+      "canonical_column": "payment_source",
+      "source_expression": "'patient'",
+      "confidence": 0.5,
+      "needs_review": true,
+      "notes": "Need UNION ALL with claimpayment (insurance) and adjustment (writeoff) tables. This mapping covers patient payments only. Operator should review the full UNION expression."
+    },
+    "payer_category": {
+      "canonical_column": "payer_category",
+      "source_expression": "'self_pay'",
+      "confidence": 0.5,
+      "needs_review": true,
+      "notes": "Patient-paid splits are 'self_pay' by definition. Insurance splits would map differently (via UNION'd claimpayment branch)."
+    }
+  },
+  "join_graph": [
+    {
+      "left_table": "paysplit",
+      "left_column": "PayNum",
+      "right_table": "payment",
+      "right_column": "PayNum",
+      "join_type": "INNER"
+    }
+  ],
+  "transformations": {},
+  "confidence": 0.0,
+  "notes": [
+    "Full Extension D coverage requires UNION ALL of paysplit (patient), claimpayment (insurance), and adjustment (writeoff). The mapping above only covers the patient branch."
+  ]
+}

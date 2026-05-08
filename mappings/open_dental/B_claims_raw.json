@@ -1,0 +1,122 @@
+{
+  "_meta": {
+    "extension_letter": "B",
+    "canonical_schema": "claims_raw",
+    "pms": "open_dental",
+    "audit_source": "tests/fixtures/anthropic_responses/open_dental_treatment_plans.json",
+    "audited_against": [
+      "https://www.opendental.com/manual/claimprocstatus.html",
+      "https://www.opendental.com/manual/claimstatus.html",
+      "https://www.opendental.com/manual/treatmentplanstatus.html",
+      "https://www.opendental.com/manual/appointmentstatus.html"
+    ],
+    "purpose": "Extension B hand-curated Open Dental mapping. Consumed by praxis_deid/extractors/b_*.py to produce claims_raw.csv at de-id time. Derived from expected_mapping_open_dental.json + expert audit. DO NOT regenerate from the wizard \u2014 the wizard's output is 78% reliable per the Wizard-1 validation gate (commit 6b19ae9). Hand-edits to this file MUST cite the Open Dental manual page they are based on."
+  },
+  "canonical_schema": "claims_raw",
+  "column_mappings": {
+    "source_id": {
+      "canonical_column": "source_id",
+      "source_expression": "claim.ClaimNum",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "Direct PK."
+    },
+    "patient_source_id": {
+      "canonical_column": "patient_source_id",
+      "source_expression": "claim.PatNum",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "Direct FK -> patient.PatNum."
+    },
+    "payer_category": {
+      "canonical_column": "payer_category",
+      "source_expression": "carrier.CarrierName",
+      "confidence": 0.4,
+      "needs_review": true,
+      "notes": "Open Dental stores carrier name as free text. Mapping carrier name to canonical payer_category enum requires a per-practice lookup table or transformation rules. Operator must supply the carrier-name -> category mapping."
+    },
+    "submission_date": {
+      "canonical_column": "submission_date",
+      "source_expression": "claim.DateSent",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "DateSent = clearinghouse submission date."
+    },
+    "payment_date": {
+      "canonical_column": "payment_date",
+      "source_expression": "(SELECT MAX(claimproc.DateCP) FROM claimproc WHERE claimproc.ClaimNum = claim.ClaimNum AND claimproc.Status = 1)",
+      "confidence": 0.85,
+      "needs_review": false,
+      "notes": "Latest claimproc.DateCP for Status=1 (Received/paid). NULL if no procs paid. Per Open Dental docs, Status=1 is the canonical 'Received' code; Status=2 is Preauth (pre-authorization, not a payment) and is a common source of analyst error."
+    },
+    "denial_date": {
+      "canonical_column": "denial_date",
+      "source_expression": "NULL",
+      "confidence": 0.2,
+      "needs_review": true,
+      "notes": "Open Dental does not flag claims as 'denied' explicitly. Denials show up as ResponseStatus in clearinghouseslog. Practices vary in how they record outright denials vs. partial pays."
+    },
+    "authorization_required": {
+      "canonical_column": "authorization_required",
+      "source_expression": "(claim.PreAuthString IS NOT NULL AND claim.PreAuthString <> '')",
+      "confidence": 0.7,
+      "needs_review": true,
+      "notes": "Inferred from presence of pre-auth string. Practices that don't track pre-auth in this field will return false even when auth was used."
+    },
+    "authorization_date": {
+      "canonical_column": "authorization_date",
+      "source_expression": "NULL",
+      "confidence": 0.0,
+      "needs_review": true,
+      "notes": "No explicit auth-date column in Open Dental claim table."
+    },
+    "denial_reason_category": {
+      "canonical_column": "denial_reason_category",
+      "source_expression": "NULL",
+      "confidence": 0.3,
+      "needs_review": true,
+      "notes": "Denial reasons live as free text in clearinghouseslog.ResponseDetail. Mapping to canonical category requires NLP or a curated lookup."
+    },
+    "status": {
+      "canonical_column": "status",
+      "source_expression": "CASE WHEN claim.ClaimStatus = 'R' THEN 'paid' WHEN claim.ClaimStatus = 'A' THEN 'paid' WHEN claim.ClaimStatus = 'S' THEN 'submitted' WHEN claim.ClaimStatus = 'I' THEN 'pending' WHEN claim.ClaimStatus = 'H' THEN 'pending' WHEN claim.ClaimStatus IN ('U','W') THEN 'pending' ELSE 'pending' END",
+      "confidence": 0.7,
+      "needs_review": true,
+      "notes": "ClaimStatus is a 1-char enum: U=Unsent, W=Waiting, P=Probable, S=Sent, R=Received, H=Hold, I=Sent-verified, A=Adjustment. Open Dental does not differentiate paid-in-full from partial in this field \u2014 'partial' must be derived from amount comparison."
+    },
+    "pre_verified": {
+      "canonical_column": "pre_verified",
+      "source_expression": "EXISTS (SELECT 1 FROM insverify WHERE insverify.FKey = claim.PatNum AND insverify.VerifyType = 0 AND insverify.DateLastVerified >= DATE_SUB(claim.DateService, INTERVAL 90 DAY))",
+      "confidence": 0.5,
+      "needs_review": true,
+      "notes": "Pre-verification heuristic: any insverify row for the patient within 90 days before service. The 90-day window is a guess; practices' verification refresh intervals vary."
+    }
+  },
+  "join_graph": [
+    {
+      "left_table": "claim",
+      "left_column": "PlanNum",
+      "right_table": "insplan",
+      "right_column": "PlanNum",
+      "join_type": "LEFT"
+    },
+    {
+      "left_table": "insplan",
+      "left_column": "CarrierNum",
+      "right_table": "carrier",
+      "right_column": "CarrierNum",
+      "join_type": "LEFT"
+    }
+  ],
+  "transformations": {
+    "status": "CASE WHEN claim.ClaimStatus = 'R' THEN 'paid' WHEN claim.ClaimStatus IN ('U','W') THEN 'pending' WHEN claim.ClaimStatus = 'S' THEN 'submitted' ELSE 'pending' END",
+    "payer_category": "/* practice-specific carrier-name -> canonical-payer-category lookup table required */"
+  },
+  "confidence": 0.0,
+  "notes": [
+    "Carrier-name to payer-category requires a practice-specific lookup. Many practices have only a few carriers; suggest the wizard prompt the operator for a mapping table.",
+    "Pre-verification window is a guess; should be a configurable parameter.",
+    "GROUND TRUTH AUDIT: payment_date corrected from claimproc.Status=2 to claimproc.Status=1 (the canonical Received code per Open Dental docs). Status=2 is Preauth.",
+    "GROUND TRUTH AUDIT: status CASE expanded to cover H/I/A enum values."
+  ]
+}

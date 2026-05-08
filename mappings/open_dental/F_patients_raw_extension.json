@@ -1,0 +1,47 @@
+{
+  "_meta": {
+    "extension_letter": "F",
+    "canonical_schema": "patients_raw_extension",
+    "pms": "open_dental",
+    "audit_source": "tests/fixtures/anthropic_responses/open_dental_treatment_plans.json",
+    "audited_against": [
+      "https://www.opendental.com/manual/claimprocstatus.html",
+      "https://www.opendental.com/manual/claimstatus.html",
+      "https://www.opendental.com/manual/treatmentplanstatus.html",
+      "https://www.opendental.com/manual/appointmentstatus.html"
+    ],
+    "purpose": "Extension F hand-curated Open Dental mapping. Consumed by praxis_deid/extractors/f_*.py to produce patients_raw_extension.csv at de-id time. Derived from expected_mapping_open_dental.json + expert audit. DO NOT regenerate from the wizard \u2014 the wizard's output is 78% reliable per the Wizard-1 validation gate (commit 6b19ae9). Hand-edits to this file MUST cite the Open Dental manual page they are based on."
+  },
+  "canonical_schema": "patients_raw_extension",
+  "column_mappings": {
+    "last_visit_date": {
+      "canonical_column": "last_visit_date",
+      "source_expression": "patient.DateLastVisit",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "Direct field."
+    },
+    "recall_due_date": {
+      "canonical_column": "recall_due_date",
+      "source_expression": "(SELECT MIN(recall.DateDue) FROM recall WHERE recall.PatNum = patient.PatNum AND recall.IsDisabled = 0 AND recall.DateDue >= CURDATE())",
+      "confidence": 0.8,
+      "needs_review": false,
+      "notes": "Soonest open recall for the patient. Practices may have multiple recall types per patient (prophy, perio, etc.); we pick the soonest."
+    },
+    "referral_source_category": {
+      "canonical_column": "referral_source_category",
+      "source_expression": "patient.ReferredBy",
+      "confidence": 0.3,
+      "needs_review": true,
+      "notes": "patient.ReferredBy is free-text in many installs and a FK to definition (category=referral source) in others. Mapping the source value to the canonical category vocab requires a per-practice lookup. Operator must supply the mapping or set this to NULL."
+    }
+  },
+  "join_graph": [],
+  "transformations": {
+    "referral_source_category": "/* practice-specific referral-source-text -> canonical-category lookup required */"
+  },
+  "confidence": 0.0,
+  "notes": [
+    "Extension F adds columns to existing patients_raw rows; treat the mapping as a JOIN-on-patient_source_id rather than a new file."
+  ]
+}

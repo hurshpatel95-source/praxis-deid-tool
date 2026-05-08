@@ -1,0 +1,74 @@
+{
+  "_meta": {
+    "extension_letter": "E",
+    "canonical_schema": "timekeeping_raw",
+    "pms": "open_dental",
+    "audit_source": "tests/fixtures/anthropic_responses/open_dental_treatment_plans.json",
+    "audited_against": [
+      "https://www.opendental.com/manual/claimprocstatus.html",
+      "https://www.opendental.com/manual/claimstatus.html",
+      "https://www.opendental.com/manual/treatmentplanstatus.html",
+      "https://www.opendental.com/manual/appointmentstatus.html"
+    ],
+    "purpose": "Extension E hand-curated Open Dental mapping. Consumed by praxis_deid/extractors/e_*.py to produce timekeeping_raw.csv at de-id time. Derived from expected_mapping_open_dental.json + expert audit. DO NOT regenerate from the wizard \u2014 the wizard's output is 78% reliable per the Wizard-1 validation gate (commit 6b19ae9). Hand-edits to this file MUST cite the Open Dental manual page they are based on."
+  },
+  "canonical_schema": "timekeeping_raw",
+  "column_mappings": {
+    "practice_period": {
+      "canonical_column": "practice_period",
+      "source_expression": "DATE_FORMAT(schedule.SchedDate, '%Y-%m')",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "Truncate to month."
+    },
+    "provider_id": {
+      "canonical_column": "provider_id",
+      "source_expression": "schedule.ProvNum",
+      "confidence": 1.0,
+      "needs_review": false,
+      "notes": "Direct."
+    },
+    "staff_role": {
+      "canonical_column": "staff_role",
+      "source_expression": "NULL",
+      "confidence": 0.0,
+      "needs_review": true,
+      "notes": "Open Dental does not store non-provider staff roles in the PMS. Staff timekeeping typically lives in payroll software (Gusto, ADP, etc.); recommend an integration there for role-grain rows."
+    },
+    "scheduled_hours": {
+      "canonical_column": "scheduled_hours",
+      "source_expression": "SUM(TIMESTAMPDIFF(MINUTE, schedule.StartTime, schedule.StopTime)) / 60.0",
+      "confidence": 0.9,
+      "needs_review": false,
+      "notes": "Hours scheduled. Same source as Extension C but different grain."
+    },
+    "productive_hours": {
+      "canonical_column": "productive_hours",
+      "source_expression": "(SELECT SUM(appointment.AptLength) / 60.0 FROM appointment WHERE appointment.ProvNum = schedule.ProvNum AND DATE(appointment.AptDateTime) = schedule.SchedDate AND appointment.AptStatus = 2)",
+      "confidence": 0.7,
+      "needs_review": true,
+      "notes": "Same as Extension C productive_hours. AptLength units may need verification per install."
+    },
+    "hourly_rate": {
+      "canonical_column": "hourly_rate",
+      "source_expression": "provider.HourlyRate",
+      "confidence": 0.6,
+      "needs_review": true,
+      "notes": "provider.HourlyRate is populated only when practices use Open Dental's payroll module \u2014 many do not. Operator should verify before relying on this column."
+    }
+  },
+  "join_graph": [
+    {
+      "left_table": "schedule",
+      "left_column": "ProvNum",
+      "right_table": "provider",
+      "right_column": "ProvNum",
+      "join_type": "LEFT"
+    }
+  ],
+  "transformations": {},
+  "confidence": 0.0,
+  "notes": [
+    "Provider-grain only; staff-role grain unmappable from PMS alone."
+  ]
+}
