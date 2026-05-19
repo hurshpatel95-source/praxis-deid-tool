@@ -547,3 +547,137 @@ cross-extension HMAC stability via a single shared `Deidentifier`.
 
 The Phase-C extractors add 188 tests to the suite (331 total). All
 passing.
+
+## Phase-D — Live-DB Connectors
+
+### Architecture
+
+A new `DBConnector` abstraction layer sits between `BaseExtractor` and
+the data source. Four implementations:
+
+* `MysqlConnector`      — SQLAlchemy + mysql-connector-python (Open
+                          Dental, any MySQL/MariaDB PMS).
+* `MssqlConnector`      — SQLAlchemy + pyodbc (Dentrix, any MS SQL
+                          Server PMS).
+* `PostgresConnector`   — SQLAlchemy + pg8000 (future PostgreSQL
+                          PMSs, or a Praxis-side warehouse mirror).
+* `JsonFixtureConnector` — the existing fixture-JSON path, refactored
+                          to use the uniform interface. This is the
+                          regression guard: the Phase-C 188-test e2e
+                          suite still passes byte-identical output
+                          after the refactor.
+
+The CLI dispatches to the right connector by URL scheme:
+
+| URL scheme prefix              | Connector              |
+|--------------------------------|------------------------|
+| `mysql+mysqlconnector://`      | `MysqlConnector`       |
+| `mssql+pyodbc://`              | `MssqlConnector`       |
+| `postgresql://` (any variant)  | `PostgresConnector`    |
+| `fixture-json://`              | `JsonFixtureConnector` |
+
+The legacy `--fixture-json <path>` flag is normalised into a
+`fixture-json://...` URL before dispatch — backward-compatible.
+
+### Credential handling
+
+Connection strings (which contain passwords) are:
+
+* **Never logged.** The audit log captures `pms_dialect` and
+  `connection_redacted` (password scrubbed to `***`); the raw URL
+  never appears. Verified by
+  `tests/test_extractor_connector_security.py::test_audit_log_contains_redacted_url_not_password`.
+* **Never written to disk** by the tool.
+* **Held in memory only** for the duration of the extraction run.
+* **Closed on `close()`** — connectors are explicit-lifecycle and
+  support `with connector_for_url(url) as c: ...`.
+
+Driver failure paths (bad host, missing driver, bad credentials) wrap
+the underlying exception in a `ConnectionError` whose message contains
+the **redacted** URL only — so a crash stack-trace can never leak the
+password. Verified by
+`test_mysql_connect_failure_surfaces_as_connection_error_without_url`.
+
+### SQL injection defense (defense-in-depth)
+
+Every connector enforces, on every query:
+
+1. **Parameterized queries only.** All values are passed via SQLAlchemy
+   `text()` + `:bind_param` binding. The connector base never calls
+   `text(f"... {user_value} ...")`.
+
+2. **Table / column allowlist.** `list_tables()` and
+   `list_columns(table)` query `INFORMATION_SCHEMA` (MSSQL / MySQL /
+   PostgreSQL) or `sqlite_master` (test shim) to build the allowlist.
+   Every `fetch_rows(table_name=..., columns=[...])` call validates the
+   request against that allowlist before the SQL is built. A table or
+   column not in the schema raises `ConnectionError` — no SQL is
+   issued.
+
+3. **Identifier syntax validation.** Every table/column name must match
+   `[A-Za-z_][A-Za-z0-9_]{0,127}`. Names containing `;`, quote-marks,
+   spaces, dots, or any non-identifier character are rejected before
+   the allowlist check even runs. Verified by
+   `test_valid_identifier_rejects_sql_injection`.
+
+4. **WHERE-clause scanning.** Any `where_clause` argument is checked
+   for `;`, `--`, `/*`, `*/`, and the DDL/DML keyword set
+   (`DROP TRUNCATE DELETE UPDATE INSERT ALTER GRANT REVOKE CREATE
+   REPLACE EXEC EXECUTE CALL MERGE ATTACH DETACH`). Hits raise
+   `ConnectionError`. The same scanner is the Phase-C mapping-config
+   gate, kept in sync intentionally.
+
+5. **Dialect-appropriate quoting.** Identifiers that survive validation
+   are quoted using the dialect's native form: backticks for MySQL,
+   square brackets for MSSQL, ANSI double-quotes for PostgreSQL /
+   SQLite. Defence-in-depth — even if a name somehow made it past
+   validation, the quoting ensures it can't break out of the
+   identifier context.
+
+### Read-only credentials are mandatory
+
+The tool only issues `SELECT` queries; it cannot perform mutations.
+But we cannot **enforce** this client-side: a sufficiently-broken
+mapping config and a sufficiently-permissive DB user could in theory
+let an attacker run something destructive. The mitigation is
+operational, not code-level:
+
+* The deployment docs require the practice to create a dedicated
+  read-only DB user (`GRANT SELECT ON opendental.*` etc.) before
+  deployment.
+* The MSSQL connector issues `SET TRANSACTION ISOLATION LEVEL
+  READ UNCOMMITTED` at connect time to minimise lock contention
+  against the live PMS. UNCOMMITTED only ever **reads** uncommitted
+  changes from other transactions — it can never **emit** a write.
+
+### Test coverage
+
+Phase-D adds 92 new tests across six files (totalling 423):
+
+* `test_extractor_connector_json_fixture.py` — 19 tests (refactor
+  parity).
+* `test_extractor_connector_mysql.py`        — 18 tests (mocked
+  driver + SQLite-backed shim round-trip).
+* `test_extractor_connector_mssql.py`        — 13 tests (mocked
+  driver + isolation-level pre-flight + TOP N injection).
+* `test_extractor_connector_postgres.py`     — 8 tests (mocked
+  driver, dialect-specific introspection).
+* `test_extractor_connector_dispatch.py`     — 13 tests (URL parsing
+  + CLI integration + driver-missing hint).
+* `test_extractor_connector_security.py`     — 21 tests (SQL-
+  injection guards + credential redaction + audit log assertions).
+
+The existing 331 Phase-C tests still pass; the `JsonFixtureConnector`
+refactor preserves the fixture-JSON contract byte-for-byte. Total:
+423 passing.
+
+### Verdict (Phase-D)
+
+**Phase-D does not weaken the v0.1 HIPAA posture.** It adds five
+defences on top of the locked Phase-C invariants: parameterized
+binding, INFORMATION_SCHEMA allowlist for table/column names,
+identifier syntax validation, WHERE-clause keyword scan, and audit-
+log credential redaction. The locked v0.1 modules (`safe_harbor`,
+`deidentify`, `hashing`, `schema`, `audit`, `config`) remain
+untouched, as do the six per-extension extractors — the connector
+layer is purely additive.

@@ -303,6 +303,62 @@ This produces all six canonical CSVs without ever opening a DB connection — us
 
 The hand-curated mapping configs live in `mappings/open_dental/`. See [`mappings/open_dental/README.md`](mappings/open_dental/README.md) for editing rules.
 
+### Live-DB connectors
+
+By default `praxis-deid extract` reads from a JSON fixture file. For live-DB operation against a practice's PMS, install the connector extra and pass `--connection`:
+
+```bash
+# Open Dental (MySQL / MariaDB)
+pip install praxis-deid[mysql]
+praxis-deid extract \
+  --connection "mysql+mysqlconnector://praxis_ro:pwd@dentalsrv:3306/opendental" \
+  --extension all --output /tmp/output \
+  --practice-id "$PRAXIS_PRACTICE_ID"
+
+# Dentrix (MS SQL Server) — requires ODBC Driver 17 or 18
+pip install praxis-deid[mssql]
+praxis-deid extract \
+  --connection "mssql+pyodbc://praxis_ro:pwd@dentrixsrv/DTXNAME?driver=ODBC+Driver+17+for+SQL+Server" \
+  --extension all --output /tmp/output \
+  --practice-id "$PRAXIS_PRACTICE_ID"
+
+# Any PostgreSQL-based PMS
+pip install praxis-deid[postgres]
+praxis-deid extract \
+  --connection "postgresql+pg8000://praxis_ro:pwd@pmsserver:5432/pmsdb" \
+  --extension all --output /tmp/output \
+  --practice-id "$PRAXIS_PRACTICE_ID"
+
+# All three connector extras at once
+pip install praxis-deid[all-connectors]
+```
+
+The URL scheme drives connector dispatch:
+
+| URL scheme prefix                              | Connector              | PMS dialect |
+|------------------------------------------------|------------------------|-------------|
+| `mysql+mysqlconnector://...`                   | `MysqlConnector`       | `mysql`     |
+| `mssql+pyodbc://...`                           | `MssqlConnector`       | `mssql`     |
+| `postgresql://...` (or `+psycopg2`, `+pg8000`) | `PostgresConnector`    | `postgres`  |
+| `fixture-json://./path/to/file.json`           | `JsonFixtureConnector` | `fixture`   |
+
+The legacy `--fixture-json <path>` flag still works — it's normalised into a `fixture-json://...` URL behind the scenes, and routes through the same `JsonFixtureConnector` as the explicit URL form.
+
+**Read-only credentials are mandatory.** The tool only ever issues `SELECT` queries; create a dedicated read-only DB user before deployment. The MSSQL connector additionally issues `SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED` at connect time to minimise lock contention against the live Dentrix install.
+
+**ODBC setup on the practice's machine (Dentrix path):**
+
+- **macOS dev**: `brew install unixodbc freetds && pip install praxis-deid[mssql]`
+- **Linux prod**: `apt install unixodbc freetds-dev tdsodbc && pip install praxis-deid[mssql]`
+- **Windows**: download Microsoft ODBC Driver 17 or 18 from [learn.microsoft.com](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server)
+
+**Security posture of the connector layer:**
+
+- All queries use SQLAlchemy parameterized binding (`text()` + `:bind_param`). Table and column names are validated against the per-table `INFORMATION_SCHEMA` allowlist before any query is built — a mapping config referencing a non-existent column fails at query-build time, not at the DB.
+- WHERE clauses (when used) are scanned for `;`, `--`, `/*`, `*/`, and DDL/DML keywords (`DROP`, `TRUNCATE`, etc.) and rejected if any match. The same scanner runs against the mapping config at load time (Phase-C invariant), so the defence is end-to-end.
+- The full connection URL (which contains the password) is **never** logged. The audit log records `pms_dialect` and `connection_redacted` (password scrubbed) only.
+- Connectors are explicit-lifecycle: `connect()` opens, `close()` releases. `__enter__` / `__exit__` are provided so `with connector_for_url(url) as c: ...` works.
+
 ## Running the tests
 
 ```bash
