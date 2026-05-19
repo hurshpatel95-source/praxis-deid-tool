@@ -23,11 +23,31 @@ from .base import (
     MappingConfig,
     load_mapping_config,
 )
+from .connectors import (
+    SUPPORTED_SCHEMES,
+    ConnectionError,
+    DBConnector,
+    JsonFixtureConnector,
+    MssqlConnector,
+    MysqlConnector,
+    PostgresConnector,
+    connector_for_url,
+    fixture_json_url,
+)
 
 __all__ = [
     "BaseExtractor",
+    "ConnectionError",
+    "DBConnector",
     "ExtractorError",
     "Filter",
+    "JsonFixtureConnector",
     "MappingConfig",
+    "MssqlConnector",
+    "MysqlConnector",
+    "PostgresConnector",
+    "SUPPORTED_SCHEMES",
+    "connector_for_url",
+    "fixture_json_url",
     "load_mapping_config",
 ]

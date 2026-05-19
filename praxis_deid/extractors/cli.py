@@ -63,6 +63,15 @@ from .base import (
     assert_no_exact_dollars_in_csv,
     load_mapping_config,
 )
+from .connectors import (
+    SUPPORTED_SCHEMES,
+    DBConnector,
+    JsonFixtureConnector,
+    connector_for_url,
+)
+from .connectors import (
+    ConnectionError as ConnectorConnectionError,
+)
 
 
 # Canonical mapping: letter -> (canonical_schema_name, csv_filename, extractor_class).
@@ -230,17 +239,43 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
     filt = Filter(since_month=args.since, until_month=args.until, limit=args.limit)
 
-    # Build the row source: either fixture-backed or live-DB-backed.
-    fixture: dict[str, list[dict[str, Any]]] = {}
+    # Phase-D: build the right DBConnector based on the URL scheme. The
+    # legacy `--fixture-json <path>` flag is normalised into a
+    # `fixture-json://<path>` URL so the dispatch is uniform.
     if args.fixture_json:
+        from .connectors import fixture_json_url as _fxurl
+
+        # Validate the file up-front so we surface a friendly error
+        # before constructing the connector.
+        if not args.fixture_json.exists():
+            print(f"error: --fixture-json file not found: {args.fixture_json}", flush=True)
+            return 2
         try:
-            fixture = json.loads(args.fixture_json.read_text(encoding="utf-8"))
+            json.loads(args.fixture_json.read_text(encoding="utf-8"))
         except json.JSONDecodeError as err:
             print(f"error: --fixture-json is not valid JSON: {err}", flush=True)
             return 2
-        if not isinstance(fixture, dict):
-            print("error: --fixture-json must be an object keyed by schema name", flush=True)
-            return 2
+        connection_url = _fxurl(args.fixture_json)
+    else:
+        connection_url = args.connection
+
+    try:
+        connector: DBConnector = connector_for_url(connection_url)
+    except ConnectorConnectionError as err:
+        print(
+            f"error: {err}\nSupported schemes: {', '.join(SUPPORTED_SCHEMES)}",
+            flush=True,
+        )
+        return 2
+
+    # Open the connection. For fixture-json this just loads the file
+    # into memory; for live-DB connectors this opens an engine + does
+    # a pre-flight check. Any failure raises ConnectionError.
+    try:
+        connector.connect()
+    except ConnectorConnectionError as err:
+        print(f"error: could not connect: {err}", flush=True)
+        return 2
 
     # ONE Deidentifier across every extension in this run -> cross-extension HMAC stability.
     deid = Deidentifier(practice_id=practice_id, salt=salt, small_n_threshold=1)
@@ -248,42 +283,44 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     registry = _extractor_registry()
     per_extension_summary: dict[str, dict[str, Any]] = {}
 
-    for letter in extensions:
-        canonical_name, csv_filename, extractor_cls = registry[letter]
-        mapping_path = args.mapping_dir / _MAPPING_FILENAMES[letter]
-        try:
-            mapping = load_mapping_config(mapping_path)
-        except ExtractorError as err:
-            print(f"[{letter}] mapping config invalid: {err}", flush=True)
-            return 3
+    try:
+        for letter in extensions:
+            canonical_name, csv_filename, extractor_cls = registry[letter]
+            mapping_path = args.mapping_dir / _MAPPING_FILENAMES[letter]
+            try:
+                mapping = load_mapping_config(mapping_path)
+            except ExtractorError as err:
+                print(f"[{letter}] mapping config invalid: {err}", flush=True)
+                return 3
 
-        if args.fixture_json:
-            rows_for_this = fixture.get(canonical_name, [])
-            row_source = _make_fixture_row_source(rows_for_this)
-        else:
-            row_source = _make_live_row_source(args.connection, mapping)
+            row_source = _make_connector_row_source(
+                connector=connector,
+                canonical_schema_name=canonical_name,
+            )
 
-        extractor: BaseExtractor = extractor_cls(
-            mapping_config=mapping,
-            deidentifier=deid,
-            row_source=row_source,
-            output_dir=output_dir,
-        )
-        rows = extractor.extract(filt)
-        out_path = extractor._dump_to_csv(rows, csv_filename)
-        # Belt-and-braces: scan the written CSV for un-banded $$$ leaks.
-        try:
-            assert_no_exact_dollars_in_csv(out_path)
-        except ExtractorError as err:
-            print(f"[{letter}] DOLLAR-LEAK GUARD TRIPPED: {err}", flush=True)
-            return 4
-        per_extension_summary[letter] = {
-            "canonical_schema": canonical_name,
-            "csv": str(out_path),
-            "rows_out": len(rows),
-            "rows_dropped": extractor.dropped_rows,
-            "drop_reasons": extractor.drop_reasons,
-        }
+            extractor: BaseExtractor = extractor_cls(
+                mapping_config=mapping,
+                deidentifier=deid,
+                row_source=row_source,
+                output_dir=output_dir,
+            )
+            rows = extractor.extract(filt)
+            out_path = extractor._dump_to_csv(rows, csv_filename)
+            # Belt-and-braces: scan the written CSV for un-banded $$$ leaks.
+            try:
+                assert_no_exact_dollars_in_csv(out_path)
+            except ExtractorError as err:
+                print(f"[{letter}] DOLLAR-LEAK GUARD TRIPPED: {err}", flush=True)
+                return 4
+            per_extension_summary[letter] = {
+                "canonical_schema": canonical_name,
+                "csv": str(out_path),
+                "rows_out": len(rows),
+                "rows_dropped": extractor.dropped_rows,
+                "drop_reasons": extractor.drop_reasons,
+            }
+    finally:
+        connector.close()
 
     write_run_record(
         audit_log_path,
@@ -299,6 +336,9 @@ def _cmd_extract(args: argparse.Namespace) -> int:
                 "until_month": filt.until_month,
                 "limit": filt.limit,
             },
+            # NEVER log the full connection URL — only the dialect + redacted view.
+            "pms_dialect": connector.pms_dialect,
+            "connection_redacted": connector.redacted_url,
             "per_extension": per_extension_summary,
         },
     )
@@ -318,41 +358,74 @@ def _cmd_extract(args: argparse.Namespace) -> int:
 
 
 # -------------------------------------------------------------------------
-# Row source factories
+# Row source factory — Phase-D: connector-aware
 # -------------------------------------------------------------------------
 
 
-def _make_fixture_row_source(
-    rows: list[Mapping[str, Any]],
+def _make_connector_row_source(
+    *,
+    connector: DBConnector,
+    canonical_schema_name: str,
 ) -> Any:
-    """Returns a RowSource that ignores its arguments and yields the
-    given rows verbatim. Tests and the --fixture-json CLI flag both use
-    this; the locked Deidentifier never sees the fixture itself."""
-    captured = list(rows)
+    """Build a ``RowSource`` callable that pulls rows via ``connector``.
 
-    def _rs(table: str, columns: list[str], filter: Filter | None) -> Iterable[Mapping[str, Any]]:
-        return iter(captured)
+    The extractors call this as ``row_source(table, columns, filter)``.
+    Different dialects need different lookups:
+
+      * :class:`JsonFixtureConnector` (``pms_dialect == 'fixture'``):
+        the fixture is keyed by ``canonical_schema_name`` (the format
+        Phase-C tests use). We pull from that key and ignore the
+        extractor's ``table`` argument.
+
+      * Live DBs (``mysql`` / ``mssql`` / ``postgres``): the extractor's
+        ``table`` argument is the source table name (e.g. ``"treatplan"``).
+        We call ``connector.fetch_rows(table_name=table, columns=cols, ...)``.
+
+    For live DBs, the column list passed to the extractor already
+    contains the qualified names like ``"treatplan.PatNum"``. We strip
+    the table prefix before passing to ``fetch_rows`` (which speaks in
+    unqualified column names), and the connector re-adds it on the way
+    back so the row dict shape matches what the extractor expects.
+    """
+
+    def _rs(
+        table: str,
+        columns: list[str],
+        filter: Filter | None,  # noqa: ARG001 — extractors filter post-fetch
+    ) -> Iterable[Mapping[str, Any]]:
+        if connector.pms_dialect == "fixture":
+            # The JsonFixtureConnector is keyed by canonical schema name.
+            assert isinstance(connector, JsonFixtureConnector)
+            # If the schema is missing from the fixture, treat as no rows
+            # (parity with the pre-Phase-D behaviour).
+            if canonical_schema_name not in connector.list_tables():
+                return iter([])
+            return connector.fetch_rows(
+                table_name=canonical_schema_name,
+                columns=columns,
+                limit=None,
+            )
+
+        # Live-DB path: extractor's `columns` are qualified ("table.col").
+        # We unqualify for the SQL builder; the connector re-adds prefix.
+        unqualified: list[str] = []
+        for c in columns:
+            unqualified.append(c.split(".", 1)[1] if "." in c else c)
+        # Drop any column the table doesn't actually have. The mapping
+        # config might reference columns across multiple joined tables,
+        # but for the initial Phase-D landing we issue a single-table
+        # SELECT per extractor — the extractor's join-aware logic still
+        # works because the row dict can include columns the table
+        # doesn't have (they'll resolve to None). Future Phase-D2 will
+        # add JOIN-aware fetching; for now, intersect with the schema.
+        known_cols = {c for c, _t in connector.list_columns(table)}
+        safe_cols = [c for c in unqualified if c in known_cols]
+        if not safe_cols:
+            return iter([])
+        return connector.fetch_rows(
+            table_name=table,
+            columns=safe_cols,
+            limit=None,
+        )
 
     return _rs
-
-
-def _make_live_row_source(connection_url: str, mapping: Any) -> Any:
-    """Build a RowSource that queries a real PMS DB.
-
-    Lazy-imports a driver. The default expectation is mysql-connector-python
-    for Open Dental; other PMSs would supply their own factory.
-
-    For Phase-C the live driver is intentionally a stub — Hursh's first
-    deployment will run via --fixture-json (an Open Dental SQL dump
-    materialized to JSON by a separate tool). The driver factory is left
-    here as the seam for a future agent to implement; raising a clear
-    NotImplementedError keeps misconfiguration loud.
-    """
-    raise NotImplementedError(
-        "Live-DB extraction is not enabled in this Phase-C build. "
-        "Run with --fixture-json <path>, or wire a per-PMS driver via "
-        "praxis_deid.extractors.cli._make_live_row_source. The hand-curated "
-        "mapping configs at mappings/<pms>/ describe the join graph; the "
-        "missing piece is the driver+SQL builder, intentionally deferred so "
-        "Phase-C ships with the deterministic logic verified end-to-end."
-    )

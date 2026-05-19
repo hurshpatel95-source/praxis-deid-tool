@@ -39,6 +39,12 @@ dev = [
   # Tests use recorded fixtures (no live API), but the import path is
   # exercised — the SDK has to be installed.
   "anthropic>=0.40",
+  # Phase-D connector tests use SQLAlchemy + SQLite (in-memory) to
+  # verify query construction without needing a real MySQL/MSSQL/Postgres
+  # install. The live driver packages (mysql-connector-python, pyodbc,
+  # pg8000) are NOT required for the test path — those connectors are
+  # exercised via unittest.mock.
+  "sqlalchemy>=2.0",
 ]
 # Wizard-1 extras: schema-mapping setup wizard for new PMS connections.
 # Pulled in only when the practice runs `praxis-deid wizard ...` for
@@ -57,6 +63,28 @@ serve = [
   "uvicorn>=0.30",
   "python-multipart>=0.0.9",
   "jinja2>=3.1",
+]
+# Phase-D live-DB connectors. Each PMS family gets its own opt-in extra
+# so the practice's IT team only installs what they need. SQLAlchemy
+# 2.x is the abstraction layer used by all three live drivers.
+mysql = [
+  "sqlalchemy>=2.0",
+  "mysql-connector-python>=8.0",
+]
+mssql = [
+  "sqlalchemy>=2.0",
+  "pyodbc>=5.0",
+]
+postgres = [
+  "sqlalchemy>=2.0",
+  "pg8000>=1.30",
+]
+# Convenience extras meta-bundle: pulls in all three live-DB drivers.
+all-connectors = [
+  "sqlalchemy>=2.0",
+  "mysql-connector-python>=8.0",
+  "pyodbc>=5.0",
+  "pg8000>=1.30",
 ]
 
 [project.scripts]
